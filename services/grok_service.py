@@ -323,7 +323,7 @@ class GrokService:
                     logger.warning(f"Query timeout, attempt {poll_attempt + 1}/{max_polls}")
                     if poll_attempt < max_polls - 1:
                         continue
-                else:
+                    else:
                         raise GrokAPIError("Task query timeout")
                 except GrokAPIError:
                     raise
