@@ -256,7 +256,7 @@ async def process_two_photos(message: Message, first_photo_path: Path, second_ph
             if path and path.exists():
                 image_service.cleanup(path)
         if first_photo_path.exists():
-        image_service.cleanup(first_photo_path)
+            image_service.cleanup(first_photo_path)
 
 
 @router.message(F.text.in_(["Две фотографии", "2 фото", "/two"]))
