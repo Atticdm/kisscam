@@ -44,11 +44,11 @@ async def handle_second_photo(message: Message, state: FSMContext):
             await state.clear()
             return
         
-        # Сохраняем вторую фотографию
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        file_data = await message.bot.download_file(file.file_path)
-        file_bytes = await file_data.read()
+            # Сохраняем вторую фотографию
+            photo = message.photo[-1]
+            file = await message.bot.get_file(photo.file_id)
+            file_data = await message.bot.download_file(file.file_path)
+            file_bytes = file_data.read()
         
         temp_path = await image_service.save_temp(file_bytes, file.file_path)
         
@@ -82,7 +82,7 @@ async def handle_photo(message: Message, state: FSMContext):
             # Сохраняем первую фотографию для ожидания второй
             file = await message.bot.get_file(photo.file_id)
             file_data = await message.bot.download_file(file.file_path)
-            file_bytes = await file_data.read()
+            file_bytes = file_data.read()
             
             temp_path = await image_service.save_temp(file_bytes, file.file_path)
             await state.update_data(first_photo_path=str(temp_path))
@@ -124,7 +124,7 @@ async def process_single_photo(message: Message, photo):
         # Скачиваем фото
         file = await message.bot.get_file(photo.file_id)
         file_data = await message.bot.download_file(file.file_path)
-        file_bytes = await file_data.read()
+        file_bytes = file_data.read()
         
         # Валидация
         try:
@@ -199,7 +199,7 @@ async def process_two_photos(message: Message, first_photo_path: Path, second_ph
         # Скачиваем вторую фотографию
         file = await message.bot.get_file(second_photo.file_id)
         file_data = await message.bot.download_file(file.file_path)
-        file_bytes = await file_data.read()
+        file_bytes = file_data.read()
         
         # Валидация второй фотографии
         try:
