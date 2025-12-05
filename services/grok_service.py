@@ -88,14 +88,14 @@ class GrokService:
     
     async def generate_kissing_video(
         self,
-        image_paths: List[Path],
+        image_urls: List[str],
         num_people: Optional[int] = None
     ) -> bytes:
         """
         Генерирует видео с целующимися людьми через Kie.ai Grok Imagine API.
         
         Args:
-            image_paths: Список путей к изображениям (1 или 2)
+            image_urls: Список публичных URL изображений (1 или 2)
             num_people: Количество людей на изображениях (опционально)
             
         Returns:
@@ -105,22 +105,11 @@ class GrokService:
             GrokAPIError: При ошибке API
         """
         try:
-            # Загружаем изображения и конвертируем в base64 для загрузки
-            import base64
-            image_data_list = []
-            
-            for img_path in image_paths:
-                with open(img_path, 'rb') as f:
-                    img_bytes = f.read()
-                    # Конвертируем в base64 data URL
-                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-                    # Определяем MIME type по расширению
-                    ext = img_path.suffix.lower()
-                    mime_type = "image/jpeg" if ext in ['.jpg', '.jpeg'] else "image/png"
-                    image_data_list.append(f"data:{mime_type};base64,{img_base64}")
+            # Используем публичные URL изображений напрямую
+            # Kie.ai API требует внешние URL, а не base64 данные
             
             # Формируем промпт для генерации видео
-            if len(image_paths) == 1:
+            if len(image_urls) == 1:
                 prompt = (
                     "Animate the people in this photo to kiss each other. "
                     "Show them moving towards each other and kissing smoothly. "
@@ -138,22 +127,20 @@ class GrokService:
             # ВАЖНО: Spicy режим работает только с изображениями, сгенерированными через Grok на Kie.ai
             # Для внешних изображений (image_urls) spicy автоматически переключается на normal
             
-            # Сначала нужно загрузить изображение и получить URL
-            # Для этого можно использовать data URL или загрузить файл на внешний хостинг
-            # Пока используем data URL (хотя API может требовать внешний URL)
-            
             # Формируем запрос согласно документации Kie.ai API
+            # Используем публичные URL от Telegram
             request_data = {
                 "model": "grok-imagine/image-to-video",
                 "input": {
-                    "image_urls": [image_data_list[0]],  # Data URL или внешний URL
+                    "image_urls": [image_urls[0]],  # Публичный URL от Telegram
                     "prompt": prompt,
                     "mode": "spicy"  # spicy режим (для внешних изображений автоматически переключится на normal)
                 }
             }
             
             logger.info("Using spicy mode for video generation (will auto-switch to normal for external images)")
-            logger.info(f"Requesting video generation for {len(image_paths)} image(s) using Kie.ai API")
+            logger.info(f"Requesting video generation for {len(image_urls)} image(s) using Kie.ai API")
+            logger.info(f"Using Telegram file URL: {image_urls[0]}")
             logger.debug(f"Request data structure: model and input keys")
             
             # Выполняем запрос к Kie.ai API

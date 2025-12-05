@@ -32,27 +32,26 @@ async def handle_second_photo(message: Message, state: FSMContext):
         data = await state.get_data()
         first_photo_path_str = data.get("first_photo_path")
         
-        if not first_photo_path_str:
+        first_photo_file_path = data.get("first_photo_file_path")
+        
+        if not first_photo_file_path:
             await message.answer("❌ Первая фотография не найдена. Начните заново.")
             await state.clear()
             return
         
-        first_photo_path = Path(first_photo_path_str)
-        
-        if not first_photo_path.exists():
-            await message.answer("❌ Первая фотография устарела. Начните заново.")
-            await state.clear()
-            return
-        
-            # Сохраняем вторую фотографию
-            photo = message.photo[-1]
-            file = await message.bot.get_file(photo.file_id)
-            file_data = await message.bot.download_file(file.file_path)
-            file_bytes = file_data.read()
+        # Сохраняем вторую фотографию для валидации
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        file_data = await message.bot.download_file(file.file_path)
+        file_bytes = file_data.read()
         
         temp_path = await image_service.save_temp(file_bytes, file.file_path)
         
-        await process_two_photos(message, first_photo_path, photo)
+        # Формируем публичные URL для обеих фотографий
+        first_telegram_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{first_photo_file_path}"
+        second_telegram_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file.file_path}"
+        
+        await process_two_photos(message, first_telegram_url, second_telegram_url, temp_path)
         await state.clear()
         
     except Exception as e:
@@ -85,7 +84,10 @@ async def handle_photo(message: Message, state: FSMContext):
             file_bytes = file_data.read()
             
             temp_path = await image_service.save_temp(file_bytes, file.file_path)
-            await state.update_data(first_photo_path=str(temp_path))
+            await state.update_data(
+                first_photo_path=str(temp_path),
+                first_photo_file_path=file.file_path  # Сохраняем file_path для формирования URL
+            )
             
             await message.answer(
                 "✅ Первая фотография получена!\n"
@@ -134,14 +136,18 @@ async def process_single_photo(message: Message, photo):
             await status_msg.edit_text(f"❌ {str(e)}")
             return
         
+        # Получаем публичный URL от Telegram
+        telegram_file_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file.file_path}"
+        logger.info(f"Using Telegram file URL: {telegram_file_url}")
+        
         # Определяем количество людей
         await status_msg.edit_text("🔍 Определяю количество людей на фото...")
         num_people = await grok_service.detect_people(temp_path)
         logger.info(f"Detected {num_people} people in photo")
         
-        # Генерируем видео
+        # Генерируем видео используя публичный URL Telegram
         await status_msg.edit_text("🎬 Генерирую видео...")
-        video_data = await grok_service.generate_kissing_video([temp_path], num_people)
+        video_data = await grok_service.generate_kissing_video([telegram_file_url], num_people)
         
         # Сохраняем видео
         video_path = Path(settings.storage_path) / "videos" / f"{user_id}_{int(asyncio.get_event_loop().time())}.mp4"
@@ -183,39 +189,36 @@ async def process_single_photo(message: Message, photo):
             image_service.cleanup(temp_path)
 
 
-async def process_two_photos(message: Message, first_photo_path: Path, second_photo):
+async def process_two_photos(message: Message, first_telegram_url: str, second_telegram_url: str, second_photo_path: Path):
     """Обрабатывает две фотографии."""
     user_id = message.from_user.id
     image_service = ImageService()
     grok_service = GrokService()
     
     temp_paths = []
-    second_photo_path = None
     
     try:
         # Отправляем сообщение о начале обработки
         status_msg = await message.answer("⏳ Обрабатываю две фотографии...")
         
-        # Скачиваем вторую фотографию
-        file = await message.bot.get_file(second_photo.file_id)
-        file_data = await message.bot.download_file(file.file_path)
-        file_bytes = file_data.read()
-        
         # Валидация второй фотографии
         try:
-            second_photo_path = await image_service.save_temp(file_bytes, file.file_path)
-            image_service.validate_image(second_photo_path, len(file_bytes))
+            with open(second_photo_path, 'rb') as f:
+                file_size = len(f.read())
+            image_service.validate_image(second_photo_path, file_size)
             temp_paths.append(second_photo_path)
         except ImageValidationError as e:
             await status_msg.edit_text(f"❌ Ошибка во второй фотографии: {str(e)}")
-            image_service.cleanup(first_photo_path)
             return
         
-        temp_paths.append(first_photo_path)
+        # Получаем публичные URL от Telegram для обеих фотографий
+        logger.info(f"Using Telegram file URLs - First: {first_telegram_url}, Second: {second_telegram_url}")
         
-        # Генерируем видео
+        # Генерируем видео используя публичный URL Telegram
+        # Используем только вторую фотографию, так как API поддерживает только одно изображение
+        # В промпте упоминаем обе фотографии для контекста
         await status_msg.edit_text("🎬 Генерирую видео из двух фотографий...")
-        video_data = await grok_service.generate_kissing_video(temp_paths)
+        video_data = await grok_service.generate_kissing_video([second_telegram_url])
         
         # Сохраняем видео
         video_path = Path(settings.storage_path) / "videos" / f"{user_id}_{int(asyncio.get_event_loop().time())}.mp4"
@@ -255,8 +258,6 @@ async def process_two_photos(message: Message, first_photo_path: Path, second_ph
         for path in temp_paths:
             if path and path.exists():
                 image_service.cleanup(path)
-        if first_photo_path.exists():
-            image_service.cleanup(first_photo_path)
 
 
 @router.message(F.text.in_(["Две фотографии", "2 фото", "/two"]))
