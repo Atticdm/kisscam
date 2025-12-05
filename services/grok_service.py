@@ -99,9 +99,9 @@ class GrokService:
             GrokAPIError: При ошибке API
         """
         try:
-            # Читаем изображения
-            images_data = []
-            for img_path in image_paths:
+        # Читаем изображения
+        images_data = []
+        for img_path in image_paths:
                 with open(img_path, 'rb') as f:
                     import base64
                     img_data = base64.b64encode(f.read()).decode('utf-8')
@@ -139,7 +139,7 @@ class GrokService:
             
             # Запрос к Grok API через chat completions
             request_data = {
-                "model": "grok-beta",  # Может потребоваться уточнение модели
+                "model": "grok-2-vision-1212",  # Vision model для работы с изображениями
                 "messages": [
                     {
                         "role": "user",
@@ -207,7 +207,7 @@ class GrokService:
         except GrokAPIError:
             # Пробрасываем GrokAPIError как есть
             raise
-        except Exception as e:
+            except Exception as e:
             logger.error(f"Error generating video: {e}", exc_info=True)
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Error details: {str(e)}")
@@ -235,7 +235,7 @@ class GrokService:
             )
             
             request_data = {
-                "model": "grok-beta",
+                "model": "grok-2-vision-1212",  # Vision model для анализа изображений
                 "messages": [
                     {
                         "role": "user",
@@ -265,8 +265,8 @@ class GrokService:
             
             # Если не удалось определить, возвращаем 2 по умолчанию
             logger.warning("Could not detect number of people, defaulting to 2")
-            return 2
-            
+        return 2
+
         except Exception as e:
             logger.error(f"Error detecting people: {e}")
             # Возвращаем 2 по умолчанию
