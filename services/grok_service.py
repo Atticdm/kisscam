@@ -99,9 +99,9 @@ class GrokService:
             GrokAPIError: При ошибке API
         """
         try:
-        # Читаем изображения
-        images_data = []
-        for img_path in image_paths:
+            # Читаем изображения
+            images_data = []
+            for img_path in image_paths:
                 with open(img_path, 'rb') as f:
                     import base64
                     img_data = base64.b64encode(f.read()).decode('utf-8')
@@ -164,7 +164,7 @@ class GrokService:
             
             raise GrokAPIError("Unexpected response format from API")
                     
-            except Exception as e:
+        except Exception as e:
             logger.error(f"Error generating video: {e}")
             raise GrokAPIError(f"Failed to generate video: {str(e)}")
     
@@ -220,8 +220,8 @@ class GrokService:
             
             # Если не удалось определить, возвращаем 2 по умолчанию
             logger.warning("Could not detect number of people, defaulting to 2")
-        return 2
-
+            return 2
+            
         except Exception as e:
             logger.error(f"Error detecting people: {e}")
             # Возвращаем 2 по умолчанию
