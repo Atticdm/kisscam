@@ -151,8 +151,8 @@ class GrokService:
             
             # Создаем задачу
             task_id = None
-            for attempt in range(self.max_retries):
-                try:
+        for attempt in range(self.max_retries):
+            try:
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
                             self.kie_create_task_endpoint,
@@ -165,8 +165,16 @@ class GrokService:
                                 logger.debug(f"Kie.ai createTask response: {result}")
                                 
                                 # Получаем task_id из ответа
+                                # API возвращает taskId внутри объекта data
+                                task_id = None
                                 if isinstance(result, dict):
-                                    task_id = result.get("task_id") or result.get("taskId") or result.get("id")
+                                    # Проверяем вложенный объект data
+                                    data = result.get("data", {})
+                                    if isinstance(data, dict):
+                                        task_id = data.get("taskId") or data.get("task_id") or data.get("id")
+                                    # Также проверяем корневой уровень на случай другого формата
+                                    if not task_id:
+                                        task_id = result.get("task_id") or result.get("taskId") or result.get("id")
                                 
                                 if not task_id:
                                     logger.error(f"No task_id in response: {result}")
@@ -225,14 +233,27 @@ class GrokService:
                                 
                                 if status == "completed" or status == "success":
                                     # Задача завершена, получаем видео
-                                    video_url = (
-                                        result.get("video_url") or
-                                        result.get("video") or
-                                        result.get("output") or
-                                        result.get("url") or
-                                        result.get("result", {}).get("video_url") or
-                                        result.get("result", {}).get("url")
-                                    )
+                                    # Проверяем в data и в корне ответа
+                                    data = result.get("data", {})
+                                    video_url = None
+                                    if isinstance(data, dict):
+                                        video_url = (
+                                            data.get("video_url") or
+                                            data.get("video") or
+                                            data.get("output") or
+                                            data.get("url") or
+                                            data.get("result", {}).get("video_url") or
+                                            data.get("result", {}).get("url")
+                                        )
+                                    if not video_url:
+                                        video_url = (
+                                            result.get("video_url") or
+                                            result.get("video") or
+                                            result.get("output") or
+                                            result.get("url") or
+                                            result.get("result", {}).get("video_url") or
+                                            result.get("result", {}).get("url")
+                                        )
                                     
                                     if video_url:
                                         logger.info(f"Task completed, found video URL: {video_url}")
@@ -247,7 +268,12 @@ class GrokService:
                                                     logger.error(f"Failed to download video: HTTP {video_resp.status}")
                                     
                                     # Проверяем base64 данные
-                                    video_data = result.get("video_data") or result.get("data") or result.get("result", {}).get("video_data")
+                                    data = result.get("data", {})
+                                    video_data = None
+                                    if isinstance(data, dict):
+                                        video_data = data.get("video_data") or data.get("data")
+                                    if not video_data:
+                                        video_data = result.get("video_data") or result.get("result", {}).get("video_data")
                                     if video_data and isinstance(video_data, str):
                                         if video_data.startswith("data:video"):
                                             import base64
@@ -260,7 +286,13 @@ class GrokService:
                                     raise GrokAPIError(f"Task completed but no video URL found: {str(result)[:500]}")
                                 
                                 elif status == "failed" or status == "error":
-                                    error_msg = result.get("error") or result.get("message") or "Unknown error"
+                                    # Проверяем сообщение об ошибке в data и в корне
+                                    data = result.get("data", {})
+                                    error_msg = None
+                                    if isinstance(data, dict):
+                                        error_msg = data.get("error") or data.get("message") or data.get("msg")
+                                    if not error_msg:
+                                        error_msg = result.get("error") or result.get("message") or result.get("msg") or "Unknown error"
                                     logger.error(f"Task failed: {error_msg}")
                                     raise GrokAPIError(f"Task failed: {error_msg}")
                                 
@@ -284,7 +316,7 @@ class GrokService:
                     logger.warning(f"Query timeout, attempt {poll_attempt + 1}/{max_polls}")
                     if poll_attempt < max_polls - 1:
                         continue
-                    else:
+                else:
                         raise GrokAPIError("Task query timeout")
                 except GrokAPIError:
                     raise
@@ -358,8 +390,8 @@ class GrokService:
             
             # Если не удалось определить, возвращаем 2 по умолчанию
             logger.warning("Could not detect number of people, defaulting to 2")
-            return 2
-            
+        return 2
+
         except Exception as e:
             logger.error(f"Error detecting people: {e}")
             # Возвращаем 2 по умолчанию
