@@ -1,4 +1,5 @@
 """Конфигурация бота."""
+import os
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from pathlib import Path
@@ -39,7 +40,24 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        # Читать переменные окружения напрямую
+        env_file_required = False
 
 
 # Глобальный экземпляр настроек
-settings = Settings()
+try:
+    settings = Settings()
+except Exception as e:
+    # Полезное сообщение об ошибке, если переменные не найдены
+    missing_vars = []
+    if not os.getenv("TELEGRAM_BOT_TOKEN"):
+        missing_vars.append("TELEGRAM_BOT_TOKEN")
+    if not os.getenv("GROK_API_KEY"):
+        missing_vars.append("GROK_API_KEY")
+    
+    if missing_vars:
+        raise ValueError(
+            f"Отсутствуют обязательные переменные окружения: {', '.join(missing_vars)}\n"
+            f"Убедитесь, что они установлены в Railway Variables."
+        ) from e
+    raise
