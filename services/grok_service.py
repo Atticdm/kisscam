@@ -112,34 +112,25 @@ class GrokService:
                         }
                     })
             
-            # Формируем детальный промпт для Grok
+            # Формируем промпт для Grok Imagine (генерация видео)
             if len(image_paths) == 1:
                 prompt = (
-                    "You are a video generation AI. Your task is to create a short animated video (3-5 seconds) "
-                    "where the people in the provided photo are kissing each other.\n\n"
-                    "Requirements:\n"
-                    "- The video should be realistic and smooth\n"
-                    "- People should naturally move towards each other and kiss\n"
-                    "- If there are multiple people, they should all kiss each other\n"
-                    "- The animation should be seamless and natural\n"
-                    "- Output format: MP4 video file\n\n"
-                    "Generate the video now and return it as a video file or provide a download URL."
+                    "Create an animated video (3-5 seconds) where the people in this photo are kissing each other. "
+                    "Animate the photo to show people moving towards each other and kissing. "
+                    "Make it realistic and smooth. If there are multiple people, show them all kissing each other."
                 )
             else:
                 prompt = (
-                    "You are a video generation AI. Your task is to create a short animated video (3-5 seconds) "
-                    "where the people from the two provided photos are kissing each other.\n\n"
-                    "Requirements:\n"
-                    "- Combine people from both photos naturally in one scene\n"
-                    "- People should move towards each other and kiss\n"
-                    "- The animation should be seamless and realistic\n"
-                    "- Output format: MP4 video file\n\n"
-                    "Generate the video now and return it as a video file or provide a download URL."
+                    "Create an animated video (3-5 seconds) where the people from these two photos are kissing each other. "
+                    "Combine the people from both photos into one scene and animate them moving towards each other and kissing. "
+                    "Make it realistic and seamless."
                 )
             
             # Запрос к Grok API через chat completions
+            # Пробуем использовать grok-2-image-1212 для генерации видео (Grok Imagine)
+            # или grok-2-vision-1212 если первая не работает
             request_data = {
-                "model": "grok-2-vision-1212",  # Vision model для работы с изображениями
+                "model": "grok-2-image-1212",  # Image model может генерировать видео через Imagine
                 "messages": [
                     {
                         "role": "user",
@@ -149,13 +140,19 @@ class GrokService:
                         ]
                     }
                 ],
-                "max_tokens": 1000
+                "max_tokens": 2000  # Увеличиваем для видео
             }
             
-            logger.info(f"Requesting video generation for {len(image_paths)} image(s)")
+            logger.info(f"Requesting video generation for {len(image_paths)} image(s) using grok-2-image-1212")
             logger.debug(f"Request data: {request_data}")
             
-            response = await self._make_request("POST", "chat/completions", data=request_data)
+            try:
+                response = await self._make_request("POST", "chat/completions", data=request_data)
+            except GrokAPIError as e:
+                # Если grok-2-image-1212 не поддерживает видео, пробуем grok-2-vision-1212
+                logger.warning(f"grok-2-image-1212 failed, trying grok-2-vision-1212: {e}")
+                request_data["model"] = "grok-2-vision-1212"
+                response = await self._make_request("POST", "chat/completions", data=request_data)
             
             logger.debug(f"Grok API response: {response}")
             
@@ -194,11 +191,40 @@ class GrokService:
                         logger.info(f"Decoded base64 video: {len(video_data)} bytes")
                         return video_data
                 
+                # Проверяем, может быть API вернул структурированные данные с видео
+                # Grok Imagine может возвращать видео в специальном формате
+                if isinstance(content, dict):
+                    # Если content - это словарь, ищем видео данные
+                    if "video_url" in content:
+                        video_url = content["video_url"]
+                        logger.info(f"Found video URL in response: {video_url}")
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(video_url) as resp:
+                                if resp.status == 200:
+                                    video_bytes = await resp.read()
+                                    logger.info(f"Downloaded video: {len(video_bytes)} bytes")
+                                    return video_bytes
+                    
+                    if "video" in content:
+                        video_data = content["video"]
+                        if isinstance(video_data, str) and video_data.startswith("http"):
+                            # Это URL
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(video_data) as resp:
+                                    if resp.status == 200:
+                                        return await resp.read()
+                        elif isinstance(video_data, str):
+                            # Это base64
+                            import base64
+                            return base64.b64decode(video_data)
+                
                 # Если контент - это просто текст с описанием
                 logger.warning(f"Grok API returned text instead of video: {content[:200]}")
+                logger.info(f"Full response content type: {type(content)}")
+                logger.info(f"Full response: {str(content)[:1000]}")
                 raise GrokAPIError(
                     f"Grok API returned text response instead of video. "
-                    f"Response: {content[:500]}"
+                    f"Response: {str(content)[:500]}"
                 )
             
             logger.error(f"Unexpected response format: {response}")
