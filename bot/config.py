@@ -11,9 +11,13 @@ class Settings(BaseSettings):
     # Telegram Bot
     telegram_bot_token: str = Field(..., env="TELEGRAM_BOT_TOKEN")
     
-    # Grok API
+    # Grok API (xAI) - для анализа изображений
     grok_api_key: str = Field(..., env="GROK_API_KEY")
     grok_api_url: str = Field(default="https://api.x.ai/v1", env="GROK_API_URL")
+    
+    # Kie.ai API - для генерации видео через Grok Imagine
+    kie_ai_api_key: str = Field(..., env="KIE_AI_API_KEY")
+    kie_ai_api_url: str = Field(default="https://api.kie.ai", env="KIE_AI_API_URL")
     
     # Redis (optional)
     redis_host: str = Field(default="localhost", env="REDIS_HOST")
@@ -54,6 +58,8 @@ except Exception as e:
         missing_vars.append("TELEGRAM_BOT_TOKEN")
     if not os.getenv("GROK_API_KEY"):
         missing_vars.append("GROK_API_KEY")
+    if not os.getenv("KIE_AI_API_KEY"):
+        missing_vars.append("KIE_AI_API_KEY")
     
     if missing_vars:
         raise ValueError(

@@ -15,31 +15,37 @@ class GrokAPIError(Exception):
 
 
 class GrokService:
-    """Сервис для взаимодействия с Grok API."""
+    """Сервис для взаимодействия с Grok API (xAI) и Kie.ai API."""
     
     def __init__(self):
-        self.api_key = settings.grok_api_key
-        self.api_url = settings.grok_api_url
-        self.base_url = f"{self.api_url}/chat/completions"
+        # Grok API (xAI) - для анализа изображений
+        self.grok_api_key = settings.grok_api_key
+        self.grok_api_url = settings.grok_api_url
+        self.grok_base_url = f"{self.grok_api_url}/chat/completions"
+        
+        # Kie.ai API - для генерации видео
+        self.kie_api_key = settings.kie_ai_api_key
+        self.kie_api_url = settings.kie_ai_api_url
+        self.kie_video_endpoint = f"{self.kie_api_url}/grok-imagine/image-to-video"
+        
         self.max_retries = 3
         self.retry_delay = 5
         
-    async def _make_request(
+    async def _make_grok_request(
         self,
         method: str,
         endpoint: str,
         data: Optional[dict] = None,
-        files: Optional[dict] = None,
         headers: Optional[dict] = None
     ) -> dict:
-        """Выполняет HTTP запрос к Grok API с retry логикой."""
+        """Выполняет HTTP запрос к Grok API (xAI) с retry логикой."""
         if headers is None:
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {self.grok_api_key}",
                 "Content-Type": "application/json"
             }
         
-        url = f"{self.api_url}/{endpoint}"
+        url = f"{self.grok_api_url}/{endpoint}"
         
         for attempt in range(self.max_retries):
             try:
@@ -48,7 +54,6 @@ class GrokService:
                         method=method,
                         url=url,
                         json=data,
-                        data=files,
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=120)
                     ) as response:
@@ -86,7 +91,7 @@ class GrokService:
         num_people: Optional[int] = None
     ) -> bytes:
         """
-        Генерирует видео с целующимися людьми через Grok API.
+        Генерирует видео с целующимися людьми через Kie.ai Grok Imagine API.
         
         Args:
             image_paths: Список путей к изображениям (1 или 2)
@@ -99,136 +104,131 @@ class GrokService:
             GrokAPIError: При ошибке API
         """
         try:
-            # Читаем изображения
-            images_data = []
+            # Загружаем изображения и конвертируем в base64 для загрузки
+            import base64
+            image_data_list = []
+            
             for img_path in image_paths:
                 with open(img_path, 'rb') as f:
-                    import base64
-                    img_data = base64.b64encode(f.read()).decode('utf-8')
-                    images_data.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{img_data}"
-                        }
-                    })
+                    img_bytes = f.read()
+                    # Конвертируем в base64 data URL
+                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                    # Определяем MIME type по расширению
+                    ext = img_path.suffix.lower()
+                    mime_type = "image/jpeg" if ext in ['.jpg', '.jpeg'] else "image/png"
+                    image_data_list.append(f"data:{mime_type};base64,{img_base64}")
             
-            # Формируем промпт для Grok Imagine (генерация видео)
+            # Формируем промпт для генерации видео
             if len(image_paths) == 1:
                 prompt = (
-                    "Create an animated video (3-5 seconds) where the people in this photo are kissing each other. "
-                    "Animate the photo to show people moving towards each other and kissing. "
-                    "Make it realistic and smooth. If there are multiple people, show them all kissing each other."
+                    "Animate the people in this photo to kiss each other. "
+                    "Show them moving towards each other and kissing smoothly. "
+                    "If there are multiple people, show them all kissing each other."
                 )
             else:
                 prompt = (
-                    "Create an animated video (3-5 seconds) where the people from these two photos are kissing each other. "
-                    "Combine the people from both photos into one scene and animate them moving towards each other and kissing. "
-                    "Make it realistic and seamless."
+                    "Combine the people from both photos and animate them kissing each other. "
+                    "Show them moving towards each other and kissing smoothly and realistically."
                 )
             
-            # Запрос к Grok API через chat completions
-            # Пробуем использовать grok-2-image-1212 для генерации видео (Grok Imagine)
-            # или grok-2-vision-1212 если первая не работает
+            # Запрос к Kie.ai Grok Imagine API
+            # Используем только первое изображение, так как API поддерживает только одно изображение
             request_data = {
-                "model": "grok-2-image-1212",  # Image model может генерировать видео через Imagine
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            *images_data
-                        ]
-                    }
-                ],
-                "max_tokens": 2000  # Увеличиваем для видео
+                "image_urls": [image_data_list[0]],  # Kie.ai принимает data URL или внешний URL
+                "prompt": prompt,
+                "mode": "normal"  # normal, fun, или spicy
             }
             
-            logger.info(f"Requesting video generation for {len(image_paths)} image(s) using grok-2-image-1212")
-            logger.debug(f"Request data: {request_data}")
+            logger.info(f"Requesting video generation for {len(image_paths)} image(s) using Kie.ai API")
+            logger.debug(f"Request data keys: {list(request_data.keys())}")
             
-            try:
-                response = await self._make_request("POST", "chat/completions", data=request_data)
-            except GrokAPIError as e:
-                # Если grok-2-image-1212 не поддерживает видео, пробуем grok-2-vision-1212
-                logger.warning(f"grok-2-image-1212 failed, trying grok-2-vision-1212: {e}")
-                request_data["model"] = "grok-2-vision-1212"
-                response = await self._make_request("POST", "chat/completions", data=request_data)
+            # Выполняем запрос к Kie.ai API
+            headers = {
+                "Authorization": f"Bearer {self.kie_api_key}",
+                "Content-Type": "application/json"
+            }
             
-            logger.debug(f"Grok API response: {response}")
+            for attempt in range(self.max_retries):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            self.kie_video_endpoint,
+                            json=request_data,
+                            headers=headers,
+                            timeout=aiohttp.ClientTimeout(total=120)
+                        ) as response:
+                            if response.status == 200:
+                                result = await response.json()
+                                logger.debug(f"Kie.ai API response: {result}")
+                                
+                                # Обработка ответа от Kie.ai
+                                # Формат ответа может быть разным, проверяем несколько вариантов
+                                video_url = None
+                                
+                                if isinstance(result, dict):
+                                    # Ищем URL видео в разных возможных полях
+                                    video_url = (
+                                        result.get("video_url") or
+                                        result.get("video") or
+                                        result.get("output") or
+                                        result.get("url")
+                                    )
+                                    
+                                    # Если это словарь с вложенными данными
+                                    if isinstance(video_url, dict):
+                                        video_url = video_url.get("url") or video_url.get("video_url")
+                                
+                                if video_url:
+                                    logger.info(f"Found video URL: {video_url}")
+                                    # Скачиваем видео
+                                    async with aiohttp.ClientSession() as download_session:
+                                        async with download_session.get(video_url) as video_resp:
+                                            if video_resp.status == 200:
+                                                video_bytes = await video_resp.read()
+                                                logger.info(f"Downloaded video: {len(video_bytes)} bytes")
+                                                return video_bytes
+                                            else:
+                                                logger.error(f"Failed to download video: HTTP {video_resp.status}")
+                                
+                                # Если URL не найден, возможно видео в base64
+                                if isinstance(result, dict):
+                                    video_data = result.get("video_data") or result.get("data")
+                                    if video_data and isinstance(video_data, str):
+                                        if video_data.startswith("data:video"):
+                                            # Извлекаем base64 данные
+                                            base64_data = video_data.split(",")[1]
+                                            video_bytes = base64.b64decode(base64_data)
+                                            logger.info(f"Decoded base64 video: {len(video_bytes)} bytes")
+                                            return video_bytes
+                                
+                                logger.error(f"Unexpected response format from Kie.ai: {result}")
+                                raise GrokAPIError(f"Kie.ai API returned unexpected format: {str(result)[:500]}")
+                            
+                            elif response.status == 429:
+                                # Rate limit
+                                wait_time = self.retry_delay * (2 ** attempt)
+                                logger.warning(f"Rate limit exceeded. Waiting {wait_time}s")
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
+                                error_text = await response.text()
+                                logger.error(f"Kie.ai API error {response.status}: {error_text}")
+                                raise GrokAPIError(f"Kie.ai API returned status {response.status}: {error_text}")
+                
+                except asyncio.TimeoutError:
+                    logger.warning(f"Request timeout, attempt {attempt + 1}/{self.max_retries}")
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    else:
+                        raise GrokAPIError("Request timeout after retries")
+                except aiohttp.ClientError as e:
+                    logger.error(f"Client error: {e}")
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    else:
+                        raise GrokAPIError(f"Client error: {e}")
             
-            # Обработка ответа
-            # Примечание: Точный формат ответа нужно уточнить по документации Grok API
-            # Возможно, API возвращает URL видео или base64 данные
-            if "choices" in response and len(response["choices"]) > 0:
-                content = response["choices"][0].get("message", {}).get("content", "")
-                logger.info(f"Received content from Grok API (length: {len(content)})")
-                
-                # Если API возвращает URL видео
-                if "http" in content or "https://" in content:
-                    # Извлекаем URL
-                    import re
-                    url_match = re.search(r'https?://[^\s<>"{}|\\^`\[\]]+', content)
-                    if url_match:
-                        video_url = url_match.group(0)
-                        logger.info(f"Found video URL: {video_url}")
-                        # Скачиваем видео по URL
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(video_url) as resp:
-                                if resp.status == 200:
-                                    video_bytes = await resp.read()
-                                    logger.info(f"Downloaded video: {len(video_bytes)} bytes")
-                                    return video_bytes
-                                else:
-                                    logger.error(f"Failed to download video: HTTP {resp.status}")
-                
-                # Если API возвращает base64 видео
-                if "data:video" in content or "base64" in content.lower():
-                    import base64
-                    # Ищем base64 данные
-                    base64_match = re.search(r'data:video/[^;]+;base64,([A-Za-z0-9+/=]+)', content)
-                    if base64_match:
-                        video_data = base64.b64decode(base64_match.group(1))
-                        logger.info(f"Decoded base64 video: {len(video_data)} bytes")
-                        return video_data
-                
-                # Проверяем, может быть API вернул структурированные данные с видео
-                # Grok Imagine может возвращать видео в специальном формате
-                if isinstance(content, dict):
-                    # Если content - это словарь, ищем видео данные
-                    if "video_url" in content:
-                        video_url = content["video_url"]
-                        logger.info(f"Found video URL in response: {video_url}")
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(video_url) as resp:
-                                if resp.status == 200:
-                                    video_bytes = await resp.read()
-                                    logger.info(f"Downloaded video: {len(video_bytes)} bytes")
-                                    return video_bytes
-                    
-                    if "video" in content:
-                        video_data = content["video"]
-                        if isinstance(video_data, str) and video_data.startswith("http"):
-                            # Это URL
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(video_data) as resp:
-                                    if resp.status == 200:
-                                        return await resp.read()
-                        elif isinstance(video_data, str):
-                            # Это base64
-                            import base64
-                            return base64.b64decode(video_data)
-                
-                # Если контент - это просто текст с описанием
-                logger.warning(f"Grok API returned text instead of video: {content[:200]}")
-                logger.info(f"Full response content type: {type(content)}")
-                logger.info(f"Full response: {str(content)[:1000]}")
-                raise GrokAPIError(
-                    f"Grok API returned text response instead of video. "
-                    f"Response: {str(content)[:500]}"
-                )
-            
-            logger.error(f"Unexpected response format: {response}")
-            raise GrokAPIError(f"Unexpected response format from API: {str(response)[:500]}")
+            raise GrokAPIError("Max retries exceeded")
                     
         except GrokAPIError:
             # Пробрасываем GrokAPIError как есть
@@ -279,7 +279,7 @@ class GrokService:
                 "max_tokens": 10
             }
             
-            response = await self._make_request("POST", "chat/completions", data=request_data)
+            response = await self._make_grok_request("POST", "chat/completions", data=request_data)
             
             if "choices" in response and len(response["choices"]) > 0:
                 content = response["choices"][0].get("message", {}).get("content", "")
