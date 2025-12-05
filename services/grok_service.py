@@ -133,11 +133,15 @@ class GrokService:
             
             # Запрос к Kie.ai Grok Imagine API
             # Используем только первое изображение, так как API поддерживает только одно изображение
+            # ВАЖНО: Spicy режим работает только с изображениями, сгенерированными через Grok на Kie.ai
+            # Для внешних изображений (image_urls) spicy автоматически переключается на normal
             request_data = {
                 "image_urls": [image_data_list[0]],  # Kie.ai принимает data URL или внешний URL
                 "prompt": prompt,
-                "mode": "normal"  # normal, fun, или spicy
+                "mode": "spicy"  # spicy режим (для внешних изображений автоматически переключится на normal)
             }
+            
+            logger.info("Using spicy mode for video generation (will auto-switch to normal for external images)")
             
             logger.info(f"Requesting video generation for {len(image_paths)} image(s) using Kie.ai API")
             logger.debug(f"Request data keys: {list(request_data.keys())}")
