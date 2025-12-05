@@ -24,6 +24,7 @@ RUN mkdir -p logs storage/temp storage/videos
 # Устанавливаем переменные окружения
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
 
 # Команда запуска
 CMD ["python", "bot/main.py"]
