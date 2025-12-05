@@ -27,7 +27,7 @@ class GrokService:
         self.kie_api_key = settings.kie_ai_api_key
         self.kie_api_url = settings.kie_ai_api_url
         self.kie_create_task_endpoint = f"{self.kie_api_url}/api/v1/jobs/createTask"
-        self.kie_query_task_endpoint = f"{self.kie_api_url}/api/v1/jobs/queryTask"
+        self.kie_record_info_endpoint = f"{self.kie_api_url}/api/v1/jobs/recordInfo"
         
         self.max_retries = 3
         self.retry_delay = 5
@@ -151,8 +151,8 @@ class GrokService:
             
             # Создаем задачу
             task_id = None
-            for attempt in range(self.max_retries):
-                try:
+        for attempt in range(self.max_retries):
+            try:
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
                             self.kie_create_task_endpoint,
@@ -226,94 +226,73 @@ class GrokService:
                         ) as response:
                             if response.status == 200:
                                 result = await response.json()
-                                logger.debug(f"Kie.ai queryTask response: {result}")
+                                logger.debug(f"Kie.ai recordInfo response: {result}")
                                 
-                                # Проверяем статус задачи
-                                # API может возвращать статус в data или в корне
-                                status = None
-                                if isinstance(result, dict):
-                                    data = result.get("data", {})
-                                    if isinstance(data, dict):
-                                        status = data.get("status") or data.get("state")
-                                    if not status:
-                                        status = result.get("status") or result.get("state")
+                                # Проверяем статус задачи согласно документации
+                                # Статус находится в data.state: waiting, success, fail
+                                data = result.get("data", {})
+                                if not isinstance(data, dict):
+                                    logger.error(f"Invalid data format in response: {result}")
+                                    if poll_attempt < max_polls - 1:
+                                        continue
+                                    else:
+                                        raise GrokAPIError("Invalid response format from Kie.ai API")
                                 
-                                if status == "completed" or status == "success":
-                                    # Задача завершена, получаем видео
-                                    # Проверяем в data и в корне ответа
-                                    data = result.get("data", {})
-                                    video_url = None
-                                    if isinstance(data, dict):
-                                        video_url = (
-                                            data.get("video_url") or
-                                            data.get("video") or
-                                            data.get("output") or
-                                            data.get("url") or
-                                            data.get("result", {}).get("video_url") or
-                                            data.get("result", {}).get("url")
-                                        )
-                                    if not video_url:
-                                        video_url = (
-                                            result.get("video_url") or
-                                            result.get("video") or
-                                            result.get("output") or
-                                            result.get("url") or
-                                            result.get("result", {}).get("video_url") or
-                                            result.get("result", {}).get("url")
-                                        )
+                                state = data.get("state")
+                                
+                                if state == "success":
+                                    # Задача завершена успешно, получаем видео из resultJson
+                                    result_json_str = data.get("resultJson")
+                                    if not result_json_str:
+                                        logger.error(f"No resultJson in response: {result}")
+                                        raise GrokAPIError("Task completed but no resultJson found")
                                     
-                                    if video_url:
-                                        logger.info(f"Task completed, found video URL: {video_url}")
-                                        # Скачиваем видео
-                                        async with aiohttp.ClientSession() as download_session:
-                                            async with download_session.get(video_url) as video_resp:
-                                                if video_resp.status == 200:
-                                                    video_bytes = await video_resp.read()
-                                                    logger.info(f"Downloaded video: {len(video_bytes)} bytes")
-                                                    return video_bytes
-                                                else:
-                                                    logger.error(f"Failed to download video: HTTP {video_resp.status}")
+                                    # Парсим JSON строку из resultJson
+                                    import json
+                                    try:
+                                        result_json = json.loads(result_json_str)
+                                    except json.JSONDecodeError as e:
+                                        logger.error(f"Failed to parse resultJson: {result_json_str}")
+                                        raise GrokAPIError(f"Invalid JSON in resultJson: {str(e)}")
                                     
-                                    # Проверяем base64 данные
-                                    data = result.get("data", {})
-                                    video_data = None
-                                    if isinstance(data, dict):
-                                        video_data = data.get("video_data") or data.get("data")
-                                    if not video_data:
-                                        video_data = result.get("video_data") or result.get("result", {}).get("video_data")
-                                    if video_data and isinstance(video_data, str):
-                                        if video_data.startswith("data:video"):
-                                            import base64
-                                            base64_data = video_data.split(",")[1]
-                                            video_bytes = base64.b64decode(base64_data)
-                                            logger.info(f"Decoded base64 video: {len(video_bytes)} bytes")
-                                            return video_bytes
+                                    # Извлекаем URL видео из resultUrls
+                                    result_urls = result_json.get("resultUrls", [])
+                                    if not result_urls or len(result_urls) == 0:
+                                        logger.error(f"No resultUrls in resultJson: {result_json}")
+                                        raise GrokAPIError("Task completed but no video URLs found")
                                     
-                                    logger.error(f"Task completed but no video found in response: {result}")
-                                    raise GrokAPIError(f"Task completed but no video URL found: {str(result)[:500]}")
+                                    video_url = result_urls[0]  # Берем первый URL
+                                    logger.info(f"Task completed, found video URL: {video_url}")
+                                    
+                                    # Скачиваем видео
+                                    async with aiohttp.ClientSession() as download_session:
+                                        async with download_session.get(video_url) as video_resp:
+                                            if video_resp.status == 200:
+                                                video_bytes = await video_resp.read()
+                                                logger.info(f"Downloaded video: {len(video_bytes)} bytes")
+                                                return video_bytes
+                                            else:
+                                                logger.error(f"Failed to download video: HTTP {video_resp.status}")
+                                                raise GrokAPIError(f"Failed to download video: HTTP {video_resp.status}")
                                 
-                                elif status == "failed" or status == "error":
-                                    # Проверяем сообщение об ошибке в data и в корне
-                                    data = result.get("data", {})
-                                    error_msg = None
-                                    if isinstance(data, dict):
-                                        error_msg = data.get("error") or data.get("message") or data.get("msg")
-                                    if not error_msg:
-                                        error_msg = result.get("error") or result.get("message") or result.get("msg") or "Unknown error"
-                                    logger.error(f"Task failed: {error_msg}")
-                                    raise GrokAPIError(f"Task failed: {error_msg}")
+                                elif state == "fail":
+                                    # Задача завершилась с ошибкой
+                                    fail_msg = data.get("failMsg") or data.get("failCode") or "Unknown error"
+                                    logger.error(f"Task failed: {fail_msg}")
+                                    raise GrokAPIError(f"Task failed: {fail_msg}")
                                 
-                                elif status == "processing" or status == "pending" or status == "running":
-                                    logger.info(f"Task {task_id} is still processing (attempt {poll_attempt + 1}/{max_polls})")
+                                elif state == "waiting":
+                                    # Задача еще обрабатывается
+                                    logger.info(f"Task {task_id} is still waiting/processing (attempt {poll_attempt + 1}/{max_polls})")
                                     continue
                                 
                                 else:
-                                    logger.warning(f"Unknown task status: {status}")
+                                    logger.warning(f"Unknown task state: {state}")
                                     continue
                             
                             else:
                                 error_text = await response.text()
-                                logger.error(f"Kie.ai queryTask error {response.status}: {error_text}")
+                                logger.error(f"Kie.ai recordInfo error {response.status}: {error_text}")
                                 if poll_attempt < max_polls - 1:
                                     continue
                                 else:
@@ -323,7 +302,7 @@ class GrokService:
                     logger.warning(f"Query timeout, attempt {poll_attempt + 1}/{max_polls}")
                     if poll_attempt < max_polls - 1:
                         continue
-                    else:
+                else:
                         raise GrokAPIError("Task query timeout")
                 except GrokAPIError:
                     raise
@@ -397,8 +376,8 @@ class GrokService:
             
             # Если не удалось определить, возвращаем 2 по умолчанию
             logger.warning("Could not detect number of people, defaulting to 2")
-            return 2
-            
+        return 2
+
         except Exception as e:
             logger.error(f"Error detecting people: {e}")
             # Возвращаем 2 по умолчанию
