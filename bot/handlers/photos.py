@@ -160,21 +160,23 @@ async def process_single_photo(message: Message, photo):
         await status_msg.delete()
         
     except GrokAPIError as e:
-        logger.error(f"Grok API error: {e}")
+        logger.error(f"Grok API error: {e}", exc_info=True)
+        error_msg = (
+            "❌ Ошибка при генерации видео через Grok API.\n\n"
+            f"Детали: {str(e)[:200]}\n\n"
+            "Попробуйте позже или отправьте другую фотографию."
+        )
         if 'status_msg' in locals():
-            await status_msg.edit_text(
-                "❌ Ошибка при генерации видео. "
-                "Попробуйте позже или отправьте другую фотографию."
-            )
+            await status_msg.edit_text(error_msg)
         else:
-            await message.answer(
-                "❌ Ошибка при генерации видео. "
-                "Попробуйте позже или отправьте другую фотографию."
-            )
+            await message.answer(error_msg)
     except Exception as e:
         logger.error(f"Error processing single photo: {e}", exc_info=True)
+        logger.error(f"Error type: {type(e).__name__}")
         await message.answer(
-            "❌ Произошла ошибка при обработке. Попробуйте еще раз."
+            f"❌ Произошла ошибка при обработке.\n"
+            f"Тип ошибки: {type(e).__name__}\n"
+            f"Сообщение: {str(e)[:200]}"
         )
     finally:
         if temp_path and temp_path.exists():
@@ -254,7 +256,7 @@ async def process_two_photos(message: Message, first_photo_path: Path, second_ph
             if path and path.exists():
                 image_service.cleanup(path)
         if first_photo_path.exists():
-            image_service.cleanup(first_photo_path)
+        image_service.cleanup(first_photo_path)
 
 
 @router.message(F.text.in_(["Две фотографии", "2 фото", "/two"]))

@@ -112,16 +112,29 @@ class GrokService:
                         }
                     })
             
-            # Формируем промпт для Grok
+            # Формируем детальный промпт для Grok
             if len(image_paths) == 1:
                 prompt = (
-                    "Create a short video (3-5 seconds) where the people in this photo "
-                    "are kissing each other. Make it realistic and smooth."
+                    "You are a video generation AI. Your task is to create a short animated video (3-5 seconds) "
+                    "where the people in the provided photo are kissing each other.\n\n"
+                    "Requirements:\n"
+                    "- The video should be realistic and smooth\n"
+                    "- People should naturally move towards each other and kiss\n"
+                    "- If there are multiple people, they should all kiss each other\n"
+                    "- The animation should be seamless and natural\n"
+                    "- Output format: MP4 video file\n\n"
+                    "Generate the video now and return it as a video file or provide a download URL."
                 )
             else:
                 prompt = (
-                    "Create a short video (3-5 seconds) where the people from these two photos "
-                    "are kissing each other. Combine them naturally and make the animation smooth."
+                    "You are a video generation AI. Your task is to create a short animated video (3-5 seconds) "
+                    "where the people from the two provided photos are kissing each other.\n\n"
+                    "Requirements:\n"
+                    "- Combine people from both photos naturally in one scene\n"
+                    "- People should move towards each other and kiss\n"
+                    "- The animation should be seamless and realistic\n"
+                    "- Output format: MP4 video file\n\n"
+                    "Generate the video now and return it as a video file or provide a download URL."
                 )
             
             # Запрос к Grok API через chat completions
@@ -140,32 +153,64 @@ class GrokService:
             }
             
             logger.info(f"Requesting video generation for {len(image_paths)} image(s)")
+            logger.debug(f"Request data: {request_data}")
+            
             response = await self._make_request("POST", "chat/completions", data=request_data)
+            
+            logger.debug(f"Grok API response: {response}")
             
             # Обработка ответа
             # Примечание: Точный формат ответа нужно уточнить по документации Grok API
             # Возможно, API возвращает URL видео или base64 данные
             if "choices" in response and len(response["choices"]) > 0:
                 content = response["choices"][0].get("message", {}).get("content", "")
+                logger.info(f"Received content from Grok API (length: {len(content)})")
                 
                 # Если API возвращает URL видео
-                if "http" in content:
-                    # Скачиваем видео по URL
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(content) as resp:
-                            if resp.status == 200:
-                                return await resp.read()
+                if "http" in content or "https://" in content:
+                    # Извлекаем URL
+                    import re
+                    url_match = re.search(r'https?://[^\s<>"{}|\\^`\[\]]+', content)
+                    if url_match:
+                        video_url = url_match.group(0)
+                        logger.info(f"Found video URL: {video_url}")
+                        # Скачиваем видео по URL
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(video_url) as resp:
+                                if resp.status == 200:
+                                    video_bytes = await resp.read()
+                                    logger.info(f"Downloaded video: {len(video_bytes)} bytes")
+                                    return video_bytes
+                                else:
+                                    logger.error(f"Failed to download video: HTTP {resp.status}")
                 
                 # Если API возвращает base64 видео
-                if "data:video" in content:
+                if "data:video" in content or "base64" in content.lower():
                     import base64
-                    video_data = content.split(",")[1]
-                    return base64.b64decode(video_data)
+                    # Ищем base64 данные
+                    base64_match = re.search(r'data:video/[^;]+;base64,([A-Za-z0-9+/=]+)', content)
+                    if base64_match:
+                        video_data = base64.b64decode(base64_match.group(1))
+                        logger.info(f"Decoded base64 video: {len(video_data)} bytes")
+                        return video_data
+                
+                # Если контент - это просто текст с описанием
+                logger.warning(f"Grok API returned text instead of video: {content[:200]}")
+                raise GrokAPIError(
+                    f"Grok API returned text response instead of video. "
+                    f"Response: {content[:500]}"
+                )
             
-            raise GrokAPIError("Unexpected response format from API")
+            logger.error(f"Unexpected response format: {response}")
+            raise GrokAPIError(f"Unexpected response format from API: {str(response)[:500]}")
                     
+        except GrokAPIError:
+            # Пробрасываем GrokAPIError как есть
+            raise
         except Exception as e:
-            logger.error(f"Error generating video: {e}")
+            logger.error(f"Error generating video: {e}", exc_info=True)
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error details: {str(e)}")
             raise GrokAPIError(f"Failed to generate video: {str(e)}")
     
     async def detect_people(self, image_path: Path) -> int:
@@ -220,8 +265,8 @@ class GrokService:
             
             # Если не удалось определить, возвращаем 2 по умолчанию
             logger.warning("Could not detect number of people, defaulting to 2")
-            return 2
-            
+        return 2
+
         except Exception as e:
             logger.error(f"Error detecting people: {e}")
             # Возвращаем 2 по умолчанию
