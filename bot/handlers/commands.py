@@ -1,11 +1,64 @@
 """Обработчики команд бота."""
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from bot.terms import AGREEMENT_SHORT, TERMS_OF_SERVICE, AGREEMENT_BUTTON_TEXT, DECLINE_BUTTON_TEXT
 
 router = Router()
+
+
+@router.callback_query(F.data == "agree_terms")
+async def agree_terms_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработчик согласия с правилами."""
+    await state.update_data(terms_agreed=True)
+    
+    welcome_text = (
+        "✅ Спасибо за согласие с правилами!\n\n"
+        "👋 Привет! Я бот Kisscam!\n\n"
+        "Я могу создавать видео, где люди целуются из ваших фотографий.\n\n"
+        "📸 Как использовать:\n"
+        "• Отправьте одну фотографию с парой или группой людей - они будут целоваться друг с другом\n"
+        "• Отправьте две фотографии с людьми - они объединятся и будут целоваться\n\n"
+        "Начните с отправки фотографии!\n\n"
+        "📋 Правила: /terms\n"
+        "❓ Помощь: /help"
+    )
+    
+    await callback.message.edit_text(welcome_text)
+    await callback.answer("Согласие принято!")
+
+
+@router.callback_query(F.data == "decline_terms")
+async def decline_terms_callback(callback: CallbackQuery):
+    """Обработчик отказа от правил."""
+    decline_text = (
+        "❌ Вы не согласились с правилами использования.\n\n"
+        "Для использования бота необходимо принять правила.\n\n"
+        "Если передумаете, используйте команду /start"
+    )
+    await callback.message.edit_text(decline_text)
+    await callback.answer("Для использования бота необходимо согласиться с правилами")
+
+
+@router.callback_query(F.data == "show_full_terms")
+async def show_full_terms_callback(callback: CallbackQuery):
+    """Показывает полные правила в отдельном сообщении."""
+    await callback.message.answer(TERMS_OF_SERVICE)
+    
+    # Показываем кнопки согласия снова
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=AGREEMENT_BUTTON_TEXT, callback_data="agree_terms"),
+            InlineKeyboardButton(text=DECLINE_BUTTON_TEXT, callback_data="decline_terms")
+        ]
+    ])
+    
+    await callback.message.answer(
+        "Прочитали правила? Подтвердите согласие:",
+        reply_markup=keyboard
+    )
+    await callback.answer()
 
 
 @router.message(Command("start"))
