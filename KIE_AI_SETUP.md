@@ -60,17 +60,29 @@ VIDEO_DURATION_SECONDS=5
 
 ## Формат запроса к Kie.ai API
 
-Бот отправляет запрос в следующем формате:
+Бот использует асинхронный API с двумя этапами:
 
+### Этап 1: Создание задачи
+Endpoint: `POST https://api.kie.ai/api/v1/jobs/createTask`
+
+Формат запроса:
 ```json
 {
-  "image_urls": ["data:image/jpeg;base64,..."],
-  "prompt": "Animate the people in this photo to kiss each other...",
-  "mode": "normal"
+  "model": "grok-imagine/image-to-video",
+  "input": {
+    "image_urls": ["data:image/jpeg;base64,..."],
+    "prompt": "Animate the people in this photo to kiss each other...",
+    "mode": "spicy"
+  }
 }
 ```
 
-Endpoint: `POST https://api.kie.ai/grok-imagine/image-to-video`
+Ответ содержит `task_id` для проверки статуса.
+
+### Этап 2: Проверка статуса задачи
+Endpoint: `GET https://api.kie.ai/api/v1/jobs/queryTask?task_id={task_id}`
+
+Бот автоматически опрашивает статус задачи каждые 5 секунд до завершения.
 
 ## Возможные проблемы
 

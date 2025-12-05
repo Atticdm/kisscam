@@ -26,7 +26,8 @@ class GrokService:
         # Kie.ai API - для генерации видео
         self.kie_api_key = settings.kie_ai_api_key
         self.kie_api_url = settings.kie_ai_api_url
-        self.kie_video_endpoint = f"{self.kie_api_url}/grok-imagine/image-to-video"
+        self.kie_create_task_endpoint = f"{self.kie_api_url}/api/v1/jobs/createTask"
+        self.kie_query_task_endpoint = f"{self.kie_api_url}/api/v1/jobs/queryTask"
         
         self.max_retries = 3
         self.retry_delay = 5
@@ -132,19 +133,28 @@ class GrokService:
                 )
             
             # Запрос к Kie.ai Grok Imagine API
+            # Правильный формат согласно документации: /api/v1/jobs/createTask
             # Используем только первое изображение, так как API поддерживает только одно изображение
             # ВАЖНО: Spicy режим работает только с изображениями, сгенерированными через Grok на Kie.ai
             # Для внешних изображений (image_urls) spicy автоматически переключается на normal
+            
+            # Сначала нужно загрузить изображение и получить URL
+            # Для этого можно использовать data URL или загрузить файл на внешний хостинг
+            # Пока используем data URL (хотя API может требовать внешний URL)
+            
+            # Формируем запрос согласно документации Kie.ai API
             request_data = {
-                "image_urls": [image_data_list[0]],  # Kie.ai принимает data URL или внешний URL
-                "prompt": prompt,
-                "mode": "spicy"  # spicy режим (для внешних изображений автоматически переключится на normal)
+                "model": "grok-imagine/image-to-video",
+                "input": {
+                    "image_urls": [image_data_list[0]],  # Data URL или внешний URL
+                    "prompt": prompt,
+                    "mode": "spicy"  # spicy режим (для внешних изображений автоматически переключится на normal)
+                }
             }
             
             logger.info("Using spicy mode for video generation (will auto-switch to normal for external images)")
-            
             logger.info(f"Requesting video generation for {len(image_paths)} image(s) using Kie.ai API")
-            logger.debug(f"Request data keys: {list(request_data.keys())}")
+            logger.debug(f"Request data structure: model and input keys")
             
             # Выполняем запрос к Kie.ai API
             headers = {
@@ -152,61 +162,31 @@ class GrokService:
                 "Content-Type": "application/json"
             }
             
+            # Создаем задачу
+            task_id = None
             for attempt in range(self.max_retries):
                 try:
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
-                            self.kie_video_endpoint,
+                            self.kie_create_task_endpoint,
                             json=request_data,
                             headers=headers,
                             timeout=aiohttp.ClientTimeout(total=120)
                         ) as response:
                             if response.status == 200:
                                 result = await response.json()
-                                logger.debug(f"Kie.ai API response: {result}")
+                                logger.debug(f"Kie.ai createTask response: {result}")
                                 
-                                # Обработка ответа от Kie.ai
-                                # Формат ответа может быть разным, проверяем несколько вариантов
-                                video_url = None
-                                
+                                # Получаем task_id из ответа
                                 if isinstance(result, dict):
-                                    # Ищем URL видео в разных возможных полях
-                                    video_url = (
-                                        result.get("video_url") or
-                                        result.get("video") or
-                                        result.get("output") or
-                                        result.get("url")
-                                    )
-                                    
-                                    # Если это словарь с вложенными данными
-                                    if isinstance(video_url, dict):
-                                        video_url = video_url.get("url") or video_url.get("video_url")
+                                    task_id = result.get("task_id") or result.get("taskId") or result.get("id")
                                 
-                                if video_url:
-                                    logger.info(f"Found video URL: {video_url}")
-                                    # Скачиваем видео
-                                    async with aiohttp.ClientSession() as download_session:
-                                        async with download_session.get(video_url) as video_resp:
-                                            if video_resp.status == 200:
-                                                video_bytes = await video_resp.read()
-                                                logger.info(f"Downloaded video: {len(video_bytes)} bytes")
-                                                return video_bytes
-                                            else:
-                                                logger.error(f"Failed to download video: HTTP {video_resp.status}")
+                                if not task_id:
+                                    logger.error(f"No task_id in response: {result}")
+                                    raise GrokAPIError(f"Kie.ai API did not return task_id: {str(result)[:500]}")
                                 
-                                # Если URL не найден, возможно видео в base64
-                                if isinstance(result, dict):
-                                    video_data = result.get("video_data") or result.get("data")
-                                    if video_data and isinstance(video_data, str):
-                                        if video_data.startswith("data:video"):
-                                            # Извлекаем base64 данные
-                                            base64_data = video_data.split(",")[1]
-                                            video_bytes = base64.b64decode(base64_data)
-                                            logger.info(f"Decoded base64 video: {len(video_bytes)} bytes")
-                                            return video_bytes
-                                
-                                logger.error(f"Unexpected response format from Kie.ai: {result}")
-                                raise GrokAPIError(f"Kie.ai API returned unexpected format: {str(result)[:500]}")
+                                logger.info(f"Task created with ID: {task_id}")
+                                break
                             
                             elif response.status == 429:
                                 # Rate limit
@@ -232,7 +212,103 @@ class GrokService:
                     else:
                         raise GrokAPIError(f"Client error: {e}")
             
-            raise GrokAPIError("Max retries exceeded")
+            if not task_id:
+                raise GrokAPIError("Failed to create task after retries")
+            
+            # Опрашиваем статус задачи до завершения
+            max_polls = 60  # Максимум 60 попыток (5 минут при интервале 5 секунд)
+            poll_interval = 5  # Проверяем каждые 5 секунд
+            
+            for poll_attempt in range(max_polls):
+                await asyncio.sleep(poll_interval)
+                
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            f"{self.kie_query_task_endpoint}?task_id={task_id}",
+                            headers=headers,
+                            timeout=aiohttp.ClientTimeout(total=30)
+                        ) as response:
+                            if response.status == 200:
+                                result = await response.json()
+                                logger.debug(f"Kie.ai queryTask response: {result}")
+                                
+                                # Проверяем статус задачи
+                                status = result.get("status") or result.get("state")
+                                
+                                if status == "completed" or status == "success":
+                                    # Задача завершена, получаем видео
+                                    video_url = (
+                                        result.get("video_url") or
+                                        result.get("video") or
+                                        result.get("output") or
+                                        result.get("url") or
+                                        result.get("result", {}).get("video_url") or
+                                        result.get("result", {}).get("url")
+                                    )
+                                    
+                                    if video_url:
+                                        logger.info(f"Task completed, found video URL: {video_url}")
+                                        # Скачиваем видео
+                                        async with aiohttp.ClientSession() as download_session:
+                                            async with download_session.get(video_url) as video_resp:
+                                                if video_resp.status == 200:
+                                                    video_bytes = await video_resp.read()
+                                                    logger.info(f"Downloaded video: {len(video_bytes)} bytes")
+                                                    return video_bytes
+                                                else:
+                                                    logger.error(f"Failed to download video: HTTP {video_resp.status}")
+                                    
+                                    # Проверяем base64 данные
+                                    video_data = result.get("video_data") or result.get("data") or result.get("result", {}).get("video_data")
+                                    if video_data and isinstance(video_data, str):
+                                        if video_data.startswith("data:video"):
+                                            import base64
+                                            base64_data = video_data.split(",")[1]
+                                            video_bytes = base64.b64decode(base64_data)
+                                            logger.info(f"Decoded base64 video: {len(video_bytes)} bytes")
+                                            return video_bytes
+                                    
+                                    logger.error(f"Task completed but no video found in response: {result}")
+                                    raise GrokAPIError(f"Task completed but no video URL found: {str(result)[:500]}")
+                                
+                                elif status == "failed" or status == "error":
+                                    error_msg = result.get("error") or result.get("message") or "Unknown error"
+                                    logger.error(f"Task failed: {error_msg}")
+                                    raise GrokAPIError(f"Task failed: {error_msg}")
+                                
+                                elif status == "processing" or status == "pending" or status == "running":
+                                    logger.info(f"Task {task_id} is still processing (attempt {poll_attempt + 1}/{max_polls})")
+                                    continue
+                                
+                                else:
+                                    logger.warning(f"Unknown task status: {status}")
+                                    continue
+                            
+                            else:
+                                error_text = await response.text()
+                                logger.error(f"Kie.ai queryTask error {response.status}: {error_text}")
+                                if poll_attempt < max_polls - 1:
+                                    continue
+                                else:
+                                    raise GrokAPIError(f"Failed to query task status: {response.status}")
+                
+                except asyncio.TimeoutError:
+                    logger.warning(f"Query timeout, attempt {poll_attempt + 1}/{max_polls}")
+                    if poll_attempt < max_polls - 1:
+                        continue
+                    else:
+                        raise GrokAPIError("Task query timeout")
+                except GrokAPIError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error querying task: {e}")
+                    if poll_attempt < max_polls - 1:
+                        continue
+                    else:
+                        raise GrokAPIError(f"Failed to query task: {str(e)}")
+            
+            raise GrokAPIError("Task did not complete within timeout period")
                     
         except GrokAPIError:
             # Пробрасываем GrokAPIError как есть
