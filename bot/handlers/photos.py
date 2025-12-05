@@ -25,6 +25,18 @@ class PhotoProcessing(StatesGroup):
 @router.message(F.photo, PhotoProcessing.waiting_second_photo)
 async def handle_second_photo(message: Message, state: FSMContext):
     """Обработчик второй фотографии."""
+    # Проверяем согласие с правилами
+    user_data = await state.get_data()
+    agreed = user_data.get("terms_agreed", False)
+    
+    if not agreed:
+        await message.answer(
+            "❌ Для использования бота необходимо согласиться с правилами.\n\n"
+            "Используйте команду /start для просмотра и принятия правил."
+        )
+        await state.clear()
+        return
+    
     image_service = ImageService()
     temp_path = None
     
@@ -69,6 +81,17 @@ async def handle_second_photo(message: Message, state: FSMContext):
 @router.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
     """Обработчик входящих фотографий (первая или единственная)."""
+    # Проверяем согласие с правилами
+    user_data = await state.get_data()
+    agreed = user_data.get("terms_agreed", False)
+    
+    if not agreed:
+        await message.answer(
+            "❌ Для использования бота необходимо согласиться с правилами.\n\n"
+            "Используйте команду /start для просмотра и принятия правил."
+        )
+        return
+    
     image_service = ImageService()
     temp_path = None
     
