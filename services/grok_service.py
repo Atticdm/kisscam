@@ -151,8 +151,8 @@ class GrokService:
             
             # Создаем задачу
             task_id = None
-        for attempt in range(self.max_retries):
-            try:
+            for attempt in range(self.max_retries):
+                try:
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
                             self.kie_create_task_endpoint,
@@ -229,7 +229,14 @@ class GrokService:
                                 logger.debug(f"Kie.ai queryTask response: {result}")
                                 
                                 # Проверяем статус задачи
-                                status = result.get("status") or result.get("state")
+                                # API может возвращать статус в data или в корне
+                                status = None
+                                if isinstance(result, dict):
+                                    data = result.get("data", {})
+                                    if isinstance(data, dict):
+                                        status = data.get("status") or data.get("state")
+                                    if not status:
+                                        status = result.get("status") or result.get("state")
                                 
                                 if status == "completed" or status == "success":
                                     # Задача завершена, получаем видео
@@ -390,8 +397,8 @@ class GrokService:
             
             # Если не удалось определить, возвращаем 2 по умолчанию
             logger.warning("Could not detect number of people, defaulting to 2")
-        return 2
-
+            return 2
+            
         except Exception as e:
             logger.error(f"Error detecting people: {e}")
             # Возвращаем 2 по умолчанию
