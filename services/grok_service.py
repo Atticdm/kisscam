@@ -233,7 +233,7 @@ class GrokService:
         except GrokAPIError:
             # Пробрасываем GrokAPIError как есть
             raise
-            except Exception as e:
+        except Exception as e:
             logger.error(f"Error generating video: {e}", exc_info=True)
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Error details: {str(e)}")
