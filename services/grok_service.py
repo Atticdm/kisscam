@@ -220,7 +220,7 @@ class GrokService:
                 try:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(
-                            f"{self.kie_query_task_endpoint}?task_id={task_id}",
+                            f"{self.kie_record_info_endpoint}?taskId={task_id}",
                             headers=headers,
                             timeout=aiohttp.ClientTimeout(total=30)
                         ) as response:
