@@ -151,8 +151,8 @@ class GrokService:
             
             # Создаем задачу
             task_id = None
-            for attempt in range(self.max_retries):
-                try:
+        for attempt in range(self.max_retries):
+            try:
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
                             self.kie_create_task_endpoint,
@@ -302,7 +302,7 @@ class GrokService:
                     logger.warning(f"Query timeout, attempt {poll_attempt + 1}/{max_polls}")
                     if poll_attempt < max_polls - 1:
                         continue
-                    else:
+                else:
                         raise GrokAPIError("Task query timeout")
                 except GrokAPIError:
                     raise
