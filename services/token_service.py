@@ -31,7 +31,7 @@ class TokenService:
                 ON CONFLICT (user_id) DO NOTHING
             """, user_id)
     
-    def can_generate(self, user_id: int) -> bool:
+    async def can_generate(self, user_id: int) -> bool:
         """
         Проверяет, может ли пользователь сгенерировать видео.
         
@@ -41,22 +41,6 @@ class TokenService:
         Returns:
             bool: True если может (есть бесплатная генерация или токены)
         """
-        # Это синхронный метод, но нам нужен async
-        # В реальности нужно вызывать async версию
-        # Для совместимости оставляем, но лучше использовать async версию
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Если цикл уже запущен, создаем задачу
-                return loop.run_until_complete(self._can_generate_async(user_id))
-            else:
-                return asyncio.run(self._can_generate_async(user_id))
-        except RuntimeError:
-            return asyncio.run(self._can_generate_async(user_id))
-    
-    async def _can_generate_async(self, user_id: int) -> bool:
-        """Асинхронная версия can_generate."""
         await self._ensure_user_exists(user_id)
         
         pool = await get_pool()
@@ -79,7 +63,7 @@ class TokenService:
     
     async def use_generation(self, user_id: int) -> bool:
         """
-        Использует одну генерацию (бесплатную или токен) (async версия).
+        Использует одну генерацию (бесплатную или токен).
         
         Args:
             user_id: ID пользователя
@@ -87,10 +71,6 @@ class TokenService:
         Returns:
             bool: True если генерация использована успешно
         """
-        return await self._use_generation_async(user_id)
-    
-    async def _use_generation_async(self, user_id: int) -> bool:
-        """Асинхронная версия use_generation."""
         await self._ensure_user_exists(user_id)
         
         pool = await get_pool()
@@ -151,7 +131,7 @@ class TokenService:
     
     async def get_balance(self, user_id: int) -> Dict[str, int]:
         """
-        Получает баланс пользователя (async версия).
+        Получает баланс пользователя.
         
         Args:
             user_id: ID пользователя
@@ -159,10 +139,6 @@ class TokenService:
         Returns:
             dict: {"tokens": количество токенов, "free_available": есть ли бесплатная генерация}
         """
-        return await self._get_balance_async(user_id)
-    
-    async def _get_balance_async(self, user_id: int) -> Dict[str, int]:
-        """Асинхронная версия get_balance."""
         await self._ensure_user_exists(user_id)
         
         pool = await get_pool()
@@ -184,16 +160,12 @@ class TokenService:
     
     async def add_tokens(self, user_id: int, amount: int):
         """
-        Добавляет токены пользователю (async версия).
+        Добавляет токены пользователю.
         
         Args:
             user_id: ID пользователя
             amount: Количество токенов для добавления
         """
-        await self._add_tokens_async(user_id, amount)
-    
-    async def _add_tokens_async(self, user_id: int, amount: int):
-        """Асинхронная версия add_tokens."""
         await self._ensure_user_exists(user_id)
         
         pool = await get_pool()
