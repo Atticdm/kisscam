@@ -132,12 +132,31 @@ class GrokService:
             # ВАЖНО: Spicy режим работает только с изображениями, сгенерированными через Grok на Kie.ai
             # Для внешних изображений (image_urls) spicy автоматически переключается на normal
             
+            # Проверяем доступность URL перед отправкой в Kie.ai
+            image_url = image_urls[0]
+            logger.info(f"Checking accessibility of Telegram file URL: {image_url}")
+            
+            # Проверяем, что URL доступен (делаем HEAD запрос)
+            try:
+                async with aiohttp.ClientSession() as check_session:
+                    async with check_session.head(
+                        image_url,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                        allow_redirects=True
+                    ) as check_response:
+                        if check_response.status != 200:
+                            logger.warning(f"Telegram URL returned status {check_response.status}, but proceeding anyway")
+                        else:
+                            logger.info(f"Telegram URL is accessible (status {check_response.status})")
+            except Exception as e:
+                logger.warning(f"Could not verify URL accessibility: {e}, but proceeding anyway")
+            
             # Формируем запрос согласно документации Kie.ai API
             # Используем публичные URL от Telegram
             request_data = {
                 "model": "grok-imagine/image-to-video",
                 "input": {
-                    "image_urls": [image_urls[0]],  # Публичный URL от Telegram
+                    "image_urls": [image_url],  # Публичный URL от Telegram
                     "prompt": prompt,
                     "mode": "spicy"  # spicy режим (для внешних изображений автоматически переключится на normal)
                 }
@@ -145,8 +164,8 @@ class GrokService:
             
             logger.info("Using spicy mode for video generation (will auto-switch to normal for external images)")
             logger.info(f"Requesting video generation for {len(image_urls)} image(s) using Kie.ai API")
-            logger.info(f"Using Telegram file URL: {image_urls[0]}")
-            logger.debug(f"Request data structure: model and input keys")
+            logger.info(f"Using Telegram file URL: {image_url}")
+            logger.debug(f"Request data structure: {request_data}")
             
             # Выполняем запрос к Kie.ai API
             headers = {

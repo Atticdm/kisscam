@@ -61,8 +61,14 @@ async def handle_second_photo(message: Message, state: FSMContext):
         temp_path = await image_service.save_temp(file_bytes, file.file_path)
         
         # Формируем публичные URL для обеих фотографий
-        first_telegram_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{first_photo_file_path}"
-        second_telegram_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file.file_path}"
+        # Важно: URL должен быть правильно сформирован и доступен для внешних сервисов
+        import urllib.parse
+        encoded_first_path = urllib.parse.quote(first_photo_file_path, safe='/')
+        encoded_second_path = urllib.parse.quote(file.file_path, safe='/')
+        first_telegram_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{encoded_first_path}"
+        second_telegram_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{encoded_second_path}"
+        logger.info(f"First photo URL: {first_telegram_url}")
+        logger.info(f"Second photo URL: {second_telegram_url}")
         
         await process_two_photos(message, first_telegram_url, second_telegram_url, temp_path)
         await state.clear()
@@ -173,8 +179,14 @@ async def process_single_photo(message: Message, photo):
             return
         
         # Получаем публичный URL от Telegram
-        telegram_file_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file.file_path}"
+        # Важно: URL должен быть правильно сформирован и доступен для внешних сервисов
+        import urllib.parse
+        # Экранируем file_path на случай специальных символов
+        encoded_file_path = urllib.parse.quote(file.file_path, safe='/')
+        telegram_file_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{encoded_file_path}"
         logger.info(f"Using Telegram file URL: {telegram_file_url}")
+        logger.info(f"Original file_path: {file.file_path}")
+        logger.info(f"Encoded file_path: {encoded_file_path}")
         
         # Определяем количество людей
         await status_msg.edit_text("🔍 Определяю количество людей на фото...")
