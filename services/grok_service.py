@@ -315,19 +315,19 @@ class GrokService:
                                 error_text = await response.text()
                                 logger.error(f"Kie.ai API error {response.status}: {error_text}")
                                 raise GrokAPIError(f"Kie.ai API returned status {response.status}: {error_text}")
-                
-                except asyncio.TimeoutError:
-                    logger.warning(f"Request timeout, attempt {attempt + 1}/{self.max_retries}")
-                    if attempt < self.max_retries - 1:
-                        await asyncio.sleep(self.retry_delay * (2 ** attempt))
-                    else:
-                        raise GrokAPIError("Request timeout after retries")
-                except aiohttp.ClientError as e:
-                    logger.error(f"Client error: {e}")
-                    if attempt < self.max_retries - 1:
-                        await asyncio.sleep(self.retry_delay * (2 ** attempt))
-                    else:
-                        raise GrokAPIError(f"Client error: {e}")
+                    
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Request timeout, attempt {attempt + 1}/{self.max_retries}")
+                        if attempt < self.max_retries - 1:
+                            await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                        else:
+                            raise GrokAPIError("Request timeout after retries")
+                    except aiohttp.ClientError as e:
+                        logger.error(f"Client error: {e}")
+                        if attempt < self.max_retries - 1:
+                            await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                        else:
+                            raise GrokAPIError(f"Client error: {e}")
             
             if not task_id:
                 raise GrokAPIError("Failed to create task after retries")
@@ -420,21 +420,21 @@ class GrokService:
                                     continue
                                 else:
                                     raise GrokAPIError(f"Failed to query task status: {response.status}")
-                
-                except asyncio.TimeoutError:
-                    logger.warning(f"Query timeout, attempt {poll_attempt + 1}/{max_polls}")
-                    if poll_attempt < max_polls - 1:
-                        continue
-                    else:
-                        raise GrokAPIError("Task query timeout")
-                except GrokAPIError:
-                    raise
-                except Exception as e:
-                    logger.error(f"Error querying task: {e}")
-                    if poll_attempt < max_polls - 1:
-                        continue
-                    else:
-                        raise GrokAPIError(f"Failed to query task: {str(e)}")
+                    
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Query timeout, attempt {poll_attempt + 1}/{max_polls}")
+                        if poll_attempt < max_polls - 1:
+                            continue
+                        else:
+                            raise GrokAPIError("Task query timeout")
+                    except GrokAPIError:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error querying task: {e}")
+                        if poll_attempt < max_polls - 1:
+                            continue
+                        else:
+                            raise GrokAPIError(f"Failed to query task: {str(e)}")
             
             raise GrokAPIError("Task did not complete within timeout period")
                     
