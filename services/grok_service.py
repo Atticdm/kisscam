@@ -381,8 +381,8 @@ class GrokService:
             
             # Если не удалось определить, возвращаем 2 по умолчанию
             logger.warning("Could not detect number of people, defaulting to 2")
-        return 2
-
+            return 2
+            
         except Exception as e:
             logger.error(f"Error detecting people: {e}")
             # Возвращаем 2 по умолчанию
