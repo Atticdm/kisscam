@@ -2,7 +2,8 @@
 import asyncio
 import aiofiles
 from pathlib import Path
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, Message
+from aiogram.exceptions import TelegramBadRequest
 from bot.config import settings
 from services.image_service import ImageService, ImageValidationError
 from services.grok_service import GrokService, GrokAPIError
@@ -11,6 +12,32 @@ from services.task_queue import VideoGenerationTask, TaskStatus
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+async def safe_edit_text(message: Message, text: str) -> bool:
+    """
+    Безопасно редактирует текст сообщения, игнорируя ошибку 'message is not modified'.
+    
+    Args:
+        message: Сообщение для редактирования
+        text: Новый текст
+        
+    Returns:
+        bool: True если редактирование успешно, False если сообщение не было изменено
+    """
+    if not message:
+        return False
+    
+    try:
+        await message.edit_text(text)
+        return True
+    except TelegramBadRequest as e:
+        # Игнорируем ошибку, если сообщение уже имеет такой же текст
+        if "message is not modified" in str(e).lower():
+            logger.debug(f"Message {message.message_id} already has text '{text[:50]}...', skipping edit")
+            return False
+        # Пробрасываем другие ошибки
+        raise
 
 
 async def process_single_photo_task(task: VideoGenerationTask):
@@ -49,7 +76,7 @@ async def process_single_photo_task(task: VideoGenerationTask):
         
         # Обновляем статус - начинаем обработку
         if task.status_message:
-            await task.status_message.edit_text("⏳ Обрабатываю фотографию...")
+            await safe_edit_text(task.status_message, "⏳ Обрабатываю фотографию...")
         
         # Получаем данные фотографии
         photo = photo_data.get('photo')
@@ -67,7 +94,7 @@ async def process_single_photo_task(task: VideoGenerationTask):
             image_service.validate_image(temp_path, len(file_bytes))
         except ImageValidationError as e:
             if task.status_message:
-                await task.status_message.edit_text(f"❌ {str(e)}")
+                await safe_edit_text(task.status_message, f"❌ {str(e)}")
             else:
                 await message.answer(f"❌ {str(e)}")
             task.status = TaskStatus.FAILED
@@ -81,7 +108,7 @@ async def process_single_photo_task(task: VideoGenerationTask):
         
         # Проверяем на запрещенный контент (дети, военные)
         if task.status_message:
-            await task.status_message.edit_text("🔍 Проверяю изображение на запрещенный контент...")
+            await safe_edit_text(task.status_message, "🔍 Проверяю изображение на запрещенный контент...")
         content_check = await grok_service.check_prohibited_content(temp_path)
         
         if content_check["is_prohibited"]:
@@ -98,7 +125,7 @@ async def process_single_photo_task(task: VideoGenerationTask):
             )
             
             if task.status_message:
-                await task.status_message.edit_text(error_msg)
+                await safe_edit_text(task.status_message, error_msg)
             else:
                 await message.answer(error_msg)
             
@@ -107,13 +134,13 @@ async def process_single_photo_task(task: VideoGenerationTask):
         
         # Определяем количество людей
         if task.status_message:
-            await task.status_message.edit_text("🔍 Определяю количество людей на фото...")
+            await safe_edit_text(task.status_message, "🔍 Определяю количество людей на фото...")
         num_people = await grok_service.detect_people(temp_path)
         logger.info(f"Detected {num_people} people in photo")
         
         # Генерируем видео используя публичный URL Telegram
         if task.status_message:
-            await task.status_message.edit_text("🎬 Генерирую видео...")
+            await safe_edit_text(task.status_message, "🎬 Генерирую видео...")
         video_data = await grok_service.generate_kissing_video([telegram_file_url], num_people)
         
         # Сохраняем видео
@@ -128,7 +155,7 @@ async def process_single_photo_task(task: VideoGenerationTask):
         
         # Отправляем видео
         if task.status_message:
-            await task.status_message.edit_text("✅ Видео готово! Отправляю...")
+            await safe_edit_text(task.status_message, "✅ Видео готово! Отправляю...")
         video_file = FSInputFile(video_path)
         
         # Добавляем информацию о балансе в подпись
@@ -222,7 +249,7 @@ async def process_two_photos_task(task: VideoGenerationTask):
         
         # Обновляем статус
         if task.status_message:
-            await task.status_message.edit_text("⏳ Обрабатываю две фотографии...")
+            await safe_edit_text(task.status_message, "⏳ Обрабатываю две фотографии...")
         
         temp_paths = []
         
@@ -235,7 +262,7 @@ async def process_two_photos_task(task: VideoGenerationTask):
                 temp_paths.append(second_photo_path)
             except ImageValidationError as e:
                 if task.status_message:
-                    await task.status_message.edit_text(f"❌ Ошибка во второй фотографии: {str(e)}")
+                    await safe_edit_text(task.status_message, f"❌ Ошибка во второй фотографии: {str(e)}")
                 else:
                     await message.answer(f"❌ Ошибка во второй фотографии: {str(e)}")
                 task.status = TaskStatus.FAILED
@@ -243,7 +270,7 @@ async def process_two_photos_task(task: VideoGenerationTask):
         
         # Проверяем обе фотографии на запрещенный контент
         if task.status_message:
-            await task.status_message.edit_text("🔍 Проверяю изображения на запрещенный контент...")
+            await safe_edit_text(task.status_message, "🔍 Проверяю изображения на запрещенный контент...")
         
         # Проверяем первую фотографию (скачиваем её для проверки)
         first_temp_path = None
@@ -274,7 +301,7 @@ async def process_two_photos_task(task: VideoGenerationTask):
                         )
                         
                         if task.status_message:
-                            await task.status_message.edit_text(error_msg)
+                            await safe_edit_text(task.status_message, error_msg)
                         else:
                             await message.answer(error_msg)
                         
@@ -302,7 +329,7 @@ async def process_two_photos_task(task: VideoGenerationTask):
                 )
                 
                 if task.status_message:
-                    await task.status_message.edit_text(error_msg)
+                    await safe_edit_text(task.status_message, error_msg)
                 else:
                     await message.answer(error_msg)
                 
@@ -313,7 +340,7 @@ async def process_two_photos_task(task: VideoGenerationTask):
         
         # Генерируем видео используя публичный URL Telegram
         if task.status_message:
-            await task.status_message.edit_text("🎬 Генерирую видео из двух фотографий...")
+            await safe_edit_text(task.status_message, "🎬 Генерирую видео из двух фотографий...")
         video_data = await grok_service.generate_kissing_video([second_telegram_url])
         
         # Сохраняем видео
@@ -328,7 +355,7 @@ async def process_two_photos_task(task: VideoGenerationTask):
         
         # Отправляем видео
         if task.status_message:
-            await task.status_message.edit_text("✅ Видео готово! Отправляю...")
+            await safe_edit_text(task.status_message, "✅ Видео готово! Отправляю...")
         video_file = FSInputFile(video_path)
         
         # Добавляем информацию о балансе в подпись
@@ -360,7 +387,7 @@ async def process_two_photos_task(task: VideoGenerationTask):
             "Попробуйте позже или отправьте другие фотографии."
         )
         if task.status_message:
-            await task.status_message.edit_text(error_msg)
+            await safe_edit_text(task.status_message, error_msg)
         else:
             await message.answer(error_msg)
         task.status = TaskStatus.FAILED
