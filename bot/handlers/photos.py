@@ -10,6 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.config import settings
 from services.image_service import ImageService, ImageValidationError
 from services.grok_service import GrokService, GrokAPIError
+from services.token_service import TokenService
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -140,7 +141,19 @@ async def process_single_photo(message: Message, photo):
     user_id = message.from_user.id
     image_service = ImageService()
     grok_service = GrokService()
+    token_service = TokenService()
     temp_path = None
+    
+    # Проверяем доступность генерации
+    if not token_service.can_generate(user_id):
+        balance = token_service.get_balance(user_id)
+        await message.answer(
+            f"❌ У вас недостаточно токенов для генерации видео.\n\n"
+            f"💰 Ваш баланс: {balance['tokens']} токенов\n\n"
+            f"💳 Купить токены: /buy\n"
+            f"📊 Проверить баланс: /tokens"
+        )
+        return
     
     try:
         # Отправляем сообщение о начале обработки
@@ -178,10 +191,24 @@ async def process_single_photo(message: Message, photo):
         async with aiofiles.open(video_path, 'wb') as f:
             await f.write(video_data)
         
+        # Списываем токен или бесплатную генерацию
+        token_service.use_generation(user_id)
+        balance = token_service.get_balance(user_id)
+        
         # Отправляем видео
         await status_msg.edit_text("✅ Видео готово! Отправляю...")
         video_file = FSInputFile(video_path)
-        await message.answer_video(video_file, caption="🎬 Ваше видео готово!")
+        
+        # Добавляем информацию о балансе в подпись
+        caption = "🎬 Ваше видео готово!"
+        if balance['tokens'] > 0:
+            caption += f"\n💰 Осталось токенов: {balance['tokens']}"
+        elif balance['free_available']:
+            caption += "\n✅ У вас есть бесплатная генерация"
+        else:
+            caption += "\n💳 Купить токены: /buy"
+        
+        await message.answer_video(video_file, caption=caption)
         
         # Очистка
         image_service.cleanup(temp_path)
@@ -217,6 +244,18 @@ async def process_two_photos(message: Message, first_telegram_url: str, second_t
     user_id = message.from_user.id
     image_service = ImageService()
     grok_service = GrokService()
+    token_service = TokenService()
+    
+    # Проверяем доступность генерации
+    if not token_service.can_generate(user_id):
+        balance = token_service.get_balance(user_id)
+        await message.answer(
+            f"❌ У вас недостаточно токенов для генерации видео.\n\n"
+            f"💰 Ваш баланс: {balance['tokens']} токенов\n\n"
+            f"💳 Купить токены: /buy\n"
+            f"📊 Проверить баланс: /tokens"
+        )
+        return
     
     temp_paths = []
     
@@ -249,10 +288,24 @@ async def process_two_photos(message: Message, first_telegram_url: str, second_t
         async with aiofiles.open(video_path, 'wb') as f:
             await f.write(video_data)
         
+        # Списываем токен или бесплатную генерацию
+        token_service.use_generation(user_id)
+        balance = token_service.get_balance(user_id)
+        
         # Отправляем видео
         await status_msg.edit_text("✅ Видео готово! Отправляю...")
         video_file = FSInputFile(video_path)
-        await message.answer_video(video_file, caption="🎬 Ваше видео готово!")
+        
+        # Добавляем информацию о балансе в подпись
+        caption = "🎬 Ваше видео готово!"
+        if balance['tokens'] > 0:
+            caption += f"\n💰 Осталось токенов: {balance['tokens']}"
+        elif balance['free_available']:
+            caption += "\n✅ У вас есть бесплатная генерация"
+        else:
+            caption += "\n💳 Купить токены: /buy"
+        
+        await message.answer_video(video_file, caption=caption)
         
         # Очистка
         for path in temp_paths:

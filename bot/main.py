@@ -17,8 +17,9 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
     
     # Регистрация роутеров
-    from bot.handlers import errors
+    from bot.handlers import errors, payments
     dp.include_router(commands.router)
+    dp.include_router(payments.router)
     dp.include_router(photos.router)
     dp.include_router(errors.router)
     
