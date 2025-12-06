@@ -55,6 +55,10 @@ class RateLimiter:
                 current_count = row['request_count']
                 stored_window_start = row['window_start']
                 
+                # Убеждаемся, что stored_window_start имеет timezone (если из БД пришел naive)
+                if stored_window_start.tzinfo is None:
+                    stored_window_start = stored_window_start.replace(tzinfo=timezone.utc)
+                
                 # Проверяем, не истекло ли окно
                 if stored_window_start < window_start:
                     # Окно истекло - сбрасываем счетчик
