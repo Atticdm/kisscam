@@ -180,9 +180,7 @@ async def cmd_promo(message: Message):
         await message.answer(
             "🎁 Использование промокода\n\n"
             "Используйте команду в формате:\n"
-            "/promo <код>\n\n"
-            "Пример:\n"
-            "/promo scam10"
+            "/promo <код>"
         )
         return
     
