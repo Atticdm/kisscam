@@ -224,12 +224,9 @@ async def get_fsm_storage():
     
     if _fsm_storage is None:
         try:
-            # Импортируем PostgreSQLStorage (пробуем разные варианты импорта)
-            try:
-                from aiogram.fsm.storage.postgresql import PostgreSQLStorage
-            except ImportError:
-                # Альтернативный путь импорта
-                from aiogram.fsm.storage.postgres import PostgreSQLStorage
+            # Используем собственную реализацию PostgreSQLStorage
+            # так как в aiogram 3.x нет встроенного PostgreSQLStorage
+            from services.fsm_storage import PostgreSQLStorage
             
             # Получаем пул соединений
             pool = await get_pool()
@@ -237,21 +234,17 @@ async def get_fsm_storage():
             # Создаем хранилище с использованием пула
             _fsm_storage = PostgreSQLStorage(pool=pool)
             
-            # Создаем схему таблиц для FSM (если метод доступен)
-            if hasattr(_fsm_storage, 'create_schema'):
-                await _fsm_storage.create_schema()
+            # Создаем схему таблиц для FSM
+            await _fsm_storage.create_schema()
             
             logger.info("FSM PostgreSQL storage initialized")
-        except ImportError as e:
-            logger.error(
-                f"Failed to import PostgreSQLStorage. "
-                f"Make sure aiogram[postgres] is installed: {e}",
-                exc_info=True
-            )
-            raise
         except Exception as e:
             logger.error(f"Failed to create FSM storage: {e}", exc_info=True)
-            raise
+            # Используем MemoryStorage как fallback
+            logger.warning("Falling back to MemoryStorage")
+            from aiogram.fsm.storage.memory import MemoryStorage
+            _fsm_storage = MemoryStorage()
+            return _fsm_storage
     
     return _fsm_storage
 
