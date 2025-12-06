@@ -145,8 +145,8 @@ async def process_single_photo(message: Message, photo):
     temp_path = None
     
     # Проверяем доступность генерации
-    if not token_service.can_generate(user_id):
-        balance = token_service.get_balance(user_id)
+    if not await token_service.can_generate(user_id):
+        balance = await token_service.get_balance(user_id)
         await message.answer(
             f"❌ У вас недостаточно токенов для генерации видео.\n\n"
             f"💰 Ваш баланс: {balance['tokens']} токенов\n\n"
@@ -192,8 +192,8 @@ async def process_single_photo(message: Message, photo):
             await f.write(video_data)
         
         # Списываем токен или бесплатную генерацию
-        token_service.use_generation(user_id)
-        balance = token_service.get_balance(user_id)
+        await token_service.use_generation(user_id)
+        balance = await token_service.get_balance(user_id)
         
         # Отправляем видео
         await status_msg.edit_text("✅ Видео готово! Отправляю...")
@@ -247,8 +247,8 @@ async def process_two_photos(message: Message, first_telegram_url: str, second_t
     token_service = TokenService()
     
     # Проверяем доступность генерации
-    if not token_service.can_generate(user_id):
-        balance = token_service.get_balance(user_id)
+    if not await token_service.can_generate(user_id):
+        balance = await token_service.get_balance(user_id)
         await message.answer(
             f"❌ У вас недостаточно токенов для генерации видео.\n\n"
             f"💰 Ваш баланс: {balance['tokens']} токенов\n\n"
@@ -289,8 +289,8 @@ async def process_two_photos(message: Message, first_telegram_url: str, second_t
             await f.write(video_data)
         
         # Списываем токен или бесплатную генерацию
-        token_service.use_generation(user_id)
-        balance = token_service.get_balance(user_id)
+        await token_service.use_generation(user_id)
+        balance = await token_service.get_balance(user_id)
         
         # Отправляем видео
         await status_msg.edit_text("✅ Видео готово! Отправляю...")

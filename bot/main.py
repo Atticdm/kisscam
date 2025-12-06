@@ -12,6 +12,15 @@ logger = setup_logger(__name__)
 
 async def main():
     """Запуск бота."""
+    # Инициализация базы данных
+    from services.database import init_database, close_database
+    try:
+        await init_database()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}", exc_info=True)
+        raise
+    
     # Инициализация бота и диспетчера
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher(storage=MemoryStorage())
@@ -33,6 +42,7 @@ async def main():
     except Exception as e:
         logger.error(f"Error running bot: {e}", exc_info=True)
     finally:
+        await close_database()
         await bot.session.close()
 
 

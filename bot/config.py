@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     kie_ai_api_key: str = Field(..., env="KIE_AI_API_KEY")
     kie_ai_api_url: str = Field(default="https://api.kie.ai", env="KIE_AI_API_URL")
     
+    # PostgreSQL Database
+    database_url: str = Field(..., env="DATABASE_URL")
+    
     # Redis (optional)
     redis_host: str = Field(default="localhost", env="REDIS_HOST")
     redis_port: int = Field(default=6379, env="REDIS_PORT")

@@ -141,9 +141,9 @@ async def successful_payment(message: Message):
         
         if package:
             # Добавляем токены пользователю
-            token_service.add_tokens(user_id, package["tokens"])
+            await token_service.add_tokens(user_id, package["tokens"])
             
-            balance = token_service.get_balance(user_id)
+            balance = await token_service.get_balance(user_id)
             
             success_text = (
                 f"✅ Оплата успешна!\n\n"
