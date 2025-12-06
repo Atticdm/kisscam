@@ -111,14 +111,19 @@ class GrokService:
             # Формируем промпт для генерации видео
             if len(image_urls) == 1:
                 prompt = (
-                    "Animate the people in this photo to kiss each other. "
-                    "Show them moving towards each other and kissing smoothly. "
-                    "If there are multiple people, show them all kissing each other."
+                    "Animate ONLY the people that are already in this photo. "
+                    "Do NOT add any new people or characters that are not in the original image. "
+                    "If there are multiple people in the photo, show them moving towards each other and kissing smoothly. "
+                    "If there is only one person in the photo, show them miming a kiss with the air - "
+                    "they should move as if kissing someone, but no other person should appear in the video. "
+                    "Keep the exact same people from the original photo, do not create or add any new characters."
                 )
             else:
                 prompt = (
-                    "Combine the people from both photos and animate them kissing each other. "
-                    "Show them moving towards each other and kissing smoothly and realistically."
+                    "Combine ONLY the people from these two photos. "
+                    "Do NOT add any new people or characters that are not in the original images. "
+                    "Animate them moving towards each other and kissing smoothly and realistically. "
+                    "Use only the people that exist in the provided photos, do not create or add any additional characters."
                 )
             
             # Запрос к Kie.ai Grok Imagine API
@@ -151,8 +156,8 @@ class GrokService:
             
             # Создаем задачу
             task_id = None
-            for attempt in range(self.max_retries):
-                try:
+        for attempt in range(self.max_retries):
+            try:
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
                             self.kie_create_task_endpoint,
@@ -302,7 +307,7 @@ class GrokService:
                     logger.warning(f"Query timeout, attempt {poll_attempt + 1}/{max_polls}")
                     if poll_attempt < max_polls - 1:
                         continue
-                    else:
+                else:
                         raise GrokAPIError("Task query timeout")
                 except GrokAPIError:
                     raise
@@ -376,8 +381,8 @@ class GrokService:
             
             # Если не удалось определить, возвращаем 2 по умолчанию
             logger.warning("Could not detect number of people, defaulting to 2")
-            return 2
-            
+        return 2
+
         except Exception as e:
             logger.error(f"Error detecting people: {e}")
             # Возвращаем 2 по умолчанию
