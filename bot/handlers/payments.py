@@ -15,7 +15,7 @@ token_service = TokenService()
 async def cmd_tokens(message: Message):
     """Показывает баланс токенов и варианты покупки."""
     user_id = message.from_user.id
-    balance = token_service.get_balance(user_id)
+    balance = await token_service.get_balance(user_id)
     
     balance_text = (
         f"💰 Ваш баланс токенов:\n\n"
