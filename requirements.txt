@@ -1,5 +1,5 @@
 # Telegram Bot
-aiogram==3.13.1
+aiogram[postgres]==3.13.1  # PostgreSQL storage для FSM
 aiofiles==24.1.0
 
 # HTTP Client

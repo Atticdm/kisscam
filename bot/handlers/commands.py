@@ -3,15 +3,22 @@ from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from bot.terms import AGREEMENT_SHORT, TERMS_OF_SERVICE, AGREEMENT_BUTTON_TEXT, DECLINE_BUTTON_TEXT
+from bot.terms import AGREEMENT_SHORT, TERMS_OF_SERVICE, AGREEMENT_BUTTON_TEXT, DECLINE_BUTTON_TEXT, TERMS_VERSION
+from services.terms_service import TermsService
+from services.promo_service import PromoService, PromoCodeError
 
 router = Router()
+terms_service = TermsService()
+promo_service = PromoService()
 
 
 @router.callback_query(F.data == "agree_terms")
-async def agree_terms_callback(callback: CallbackQuery, state: FSMContext):
+async def agree_terms_callback(callback: CallbackQuery):
     """Обработчик согласия с правилами."""
-    await state.update_data(terms_agreed=True)
+    user_id = callback.from_user.id
+    
+    # Сохраняем согласие в базе данных
+    await terms_service.agree_to_terms(user_id)
     
     welcome_text = (
         "✅ Спасибо за согласие с правилами!\n\n"
@@ -66,12 +73,12 @@ async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start."""
     user_id = message.from_user.id
     
-    # Проверяем, согласился ли пользователь уже
-    user_data = await state.get_data()
-    agreed = user_data.get("terms_agreed", False)
+    # Проверяем, согласился ли пользователь с текущей версией правил
+    terms_info = await terms_service.get_terms_info(user_id)
+    agreed = terms_info["agreed"]
     
     if agreed:
-        # Пользователь уже согласился, показываем обычное приветствие
+        # Пользователь уже согласился с текущей версией правил
         welcome_text = (
             "👋 Привет! Я бот Kisscam!\n\n"
             "Я могу создавать видео, где люди целуются из ваших фотографий.\n\n"
@@ -85,8 +92,15 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer(welcome_text)
     else:
         # Показываем соглашение и требуем подтверждения
+        # Если правила обновились, сообщаем об этом
+        if terms_info["terms_version"] is not None and terms_info["terms_version"] < TERMS_VERSION:
+            update_notice = "\n⚠️ Правила были обновлены. Пожалуйста, ознакомьтесь с новыми правилами и подтвердите согласие.\n\n"
+        else:
+            update_notice = ""
+        
         agreement_text = (
             "👋 Привет! Я бот Kisscam!\n\n"
+            f"{update_notice}"
             f"{AGREEMENT_SHORT}\n\n"
             "Для использования бота необходимо согласиться с правилами."
         )
@@ -131,3 +145,66 @@ async def cmd_help(message: Message):
 async def cmd_terms(message: Message):
     """Обработчик команды /terms - показывает полные правила."""
     await message.answer(TERMS_OF_SERVICE)
+
+
+@router.message(Command("menu"))
+async def cmd_menu(message: Message):
+    """Обработчик команды /menu - показывает меню команд."""
+    menu_text = (
+        "📋 Меню команд бота Kisscam:\n\n"
+        "🚀 Основные команды:\n"
+        "• /start - Запустить бота\n"
+        "• /help - Помощь по использованию\n"
+        "• /menu - Показать это меню\n\n"
+        "💰 Токены и покупки:\n"
+        "• /tokens - Проверить баланс токенов\n"
+        "• /buy - Купить токены\n"
+        "• /promo - Использовать промокод\n\n"
+        "📋 Информация:\n"
+        "• /terms - Правила использования\n\n"
+        "📸 Использование:\n"
+        "Просто отправьте фотографию с людьми, и я создам видео с целующимися персонажами!\n"
+        "Можно отправить одну или две фотографии."
+    )
+    
+    await message.answer(menu_text)
+
+
+@router.message(Command("promo"))
+async def cmd_promo(message: Message):
+    """Обработчик команды /promo - применение промокода."""
+    user_id = message.from_user.id
+    command_parts = message.text.split(maxsplit=1)
+    
+    if len(command_parts) < 2:
+        await message.answer(
+            "🎁 Использование промокода\n\n"
+            "Используйте команду в формате:\n"
+            "/promo <код>\n\n"
+            "Пример:\n"
+            "/promo scam10"
+        )
+        return
+    
+    code = command_parts[1].strip()
+    
+    try:
+        result = await promo_service.apply_promo_code(user_id, code)
+        
+        success_msg = (
+            f"✅ Промокод успешно применен!\n\n"
+            f"🎁 Добавлено генераций: {result['generations_added']}\n"
+            f"📊 Всего промокодных генераций: {result['total_promo_generations']}\n\n"
+            f"Теперь вы можете использовать эти генерации для создания видео!"
+        )
+        
+        await message.answer(success_msg)
+        
+    except PromoCodeError as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error applying promo code: {e}", exc_info=True)
+        await message.answer(
+            "❌ Произошла ошибка при применении промокода.\n"
+            "Попробуйте позже или проверьте правильность кода."
+        )

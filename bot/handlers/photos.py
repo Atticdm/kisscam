@@ -11,11 +11,15 @@ from bot.config import settings
 from services.image_service import ImageService, ImageValidationError
 from services.grok_service import GrokService, GrokAPIError
 from services.token_service import TokenService
+from services.terms_service import TermsService
+from services.task_queue import get_task_queue, VideoGenerationTask, TaskStatus
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 router = Router()
+terms_service = TermsService()
+task_queue = get_task_queue()
 
 
 class PhotoProcessing(StatesGroup):
@@ -26,9 +30,9 @@ class PhotoProcessing(StatesGroup):
 @router.message(F.photo, PhotoProcessing.waiting_second_photo)
 async def handle_second_photo(message: Message, state: FSMContext):
     """Обработчик второй фотографии."""
-    # Проверяем согласие с правилами
-    user_data = await state.get_data()
-    agreed = user_data.get("terms_agreed", False)
+    # Проверяем согласие с правилами через БД
+    user_id = message.from_user.id
+    agreed = await terms_service.has_agreed_to_current_terms(user_id)
     
     if not agreed:
         await message.answer(
@@ -70,7 +74,7 @@ async def handle_second_photo(message: Message, state: FSMContext):
         logger.info(f"First photo URL: {first_telegram_url}")
         logger.info(f"Second photo URL: {second_telegram_url}")
         
-        await process_two_photos(message, first_telegram_url, second_telegram_url, temp_path)
+        await add_two_photos_to_queue(message, first_telegram_url, second_telegram_url, temp_path)
         await state.clear()
         
     except Exception as e:
@@ -88,9 +92,9 @@ async def handle_second_photo(message: Message, state: FSMContext):
 @router.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
     """Обработчик входящих фотографий (первая или единственная)."""
-    # Проверяем согласие с правилами
-    user_data = await state.get_data()
-    agreed = user_data.get("terms_agreed", False)
+    # Проверяем согласие с правилами через БД
+    user_id = message.from_user.id
+    agreed = await terms_service.has_agreed_to_current_terms(user_id)
     
     if not agreed:
         await message.answer(
@@ -125,8 +129,8 @@ async def handle_photo(message: Message, state: FSMContext):
             )
             return
         
-        # Обрабатываем одну фотографию
-        await process_single_photo(message, photo)
+        # Добавляем задачу в очередь вместо прямой обработки
+        await add_single_photo_to_queue(message, photo)
             
     except Exception as e:
         logger.error(f"Error handling photo: {e}", exc_info=True)
@@ -142,113 +146,186 @@ async def handle_photo(message: Message, state: FSMContext):
                 image_service.cleanup(temp_path)
 
 
-async def process_single_photo(message: Message, photo):
-    """Обрабатывает одну фотографию."""
+async def add_single_photo_to_queue(message: Message, photo):
+    """Добавляет задачу обработки одной фотографии в очередь."""
     user_id = message.from_user.id
-    image_service = ImageService()
-    grok_service = GrokService()
     token_service = TokenService()
-    temp_path = None
+    image_service = ImageService()
     
     # Проверяем доступность генерации
     if not await token_service.can_generate(user_id):
         balance = await token_service.get_balance(user_id)
-        await message.answer(
-            f"❌ У вас недостаточно токенов для генерации видео.\n\n"
-            f"💰 Ваш баланс: {balance['tokens']} токенов\n\n"
+        error_msg = (
+            f"❌ У вас недостаточно ресурсов для генерации видео.\n\n"
+            f"💰 Токенов: {balance['tokens']}\n"
+        )
+        promo_generations = balance.get('promo_generations', 0) or 0
+        if promo_generations > 0:
+            error_msg += f"🎁 Промокодных генераций: {promo_generations}\n"
+        if balance['free_remaining'] > 0:
+            error_msg += f"✅ Осталось бесплатных генераций: {balance['free_remaining']}\n\n"
+        else:
+            error_msg += f"❌ Бесплатные генерации использованы ({balance['free_used']}/{token_service.FREE_GENERATIONS_LIMIT})\n\n"
+        error_msg += (
             f"💳 Купить токены: /buy\n"
             f"📊 Проверить баланс: /tokens"
         )
+        await message.answer(error_msg)
         return
     
     try:
-        # Отправляем сообщение о начале обработки
-        status_msg = await message.answer("⏳ Обрабатываю фотографию...")
-        
-        # Скачиваем фото
+        # Скачиваем фото заранее (до добавления в очередь)
         file = await message.bot.get_file(photo.file_id)
         file_data = await message.bot.download_file(file.file_path)
         file_bytes = file_data.read()
         
-        # Валидация
-        try:
-            temp_path = await image_service.save_temp(file_bytes, file.file_path)
-            image_service.validate_image(temp_path, len(file_bytes))
-        except ImageValidationError as e:
-            await status_msg.edit_text(f"❌ {str(e)}")
-            return
+        # Валидация перед добавлением в очередь
+        temp_path = await image_service.save_temp(file_bytes, file.file_path)
+        image_service.validate_image(temp_path, len(file_bytes))
         
-        # Получаем публичный URL от Telegram
-        # Важно: URL должен быть правильно сформирован и доступен для внешних сервисов
-        import urllib.parse
-        # Экранируем file_path на случай специальных символов
-        encoded_file_path = urllib.parse.quote(file.file_path, safe='/')
-        telegram_file_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{encoded_file_path}"
-        logger.info(f"Using Telegram file URL: {telegram_file_url}")
-        logger.info(f"Original file_path: {file.file_path}")
-        logger.info(f"Encoded file_path: {encoded_file_path}")
+        # Получаем позицию в очереди
+        queue_size = await task_queue.get_queue_size()
+        position = queue_size + 1
         
-        # Определяем количество людей
-        await status_msg.edit_text("🔍 Определяю количество людей на фото...")
-        num_people = await grok_service.detect_people(temp_path)
-        logger.info(f"Detected {num_people} people in photo")
-        
-        # Генерируем видео используя публичный URL Telegram
-        await status_msg.edit_text("🎬 Генерирую видео...")
-        video_data = await grok_service.generate_kissing_video([telegram_file_url], num_people)
-        
-        # Сохраняем видео
-        video_path = Path(settings.storage_path) / "videos" / f"{user_id}_{int(asyncio.get_event_loop().time())}.mp4"
-        video_path.parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(video_path, 'wb') as f:
-            await f.write(video_data)
-        
-        # Списываем токен или бесплатную генерацию
-        await token_service.use_generation(user_id)
-        balance = await token_service.get_balance(user_id)
-        
-        # Отправляем видео
-        await status_msg.edit_text("✅ Видео готово! Отправляю...")
-        video_file = FSInputFile(video_path)
-        
-        # Добавляем информацию о балансе в подпись
-        caption = "🎬 Ваше видео готово!"
-        if balance['tokens'] > 0:
-            caption += f"\n💰 Осталось токенов: {balance['tokens']}"
-        elif balance['free_available']:
-            caption += "\n✅ У вас есть бесплатная генерация"
+        # Отправляем сообщение о добавлении в очередь
+        if position > task_queue.max_workers:
+            status_msg = await message.answer(
+                f"📋 Задача добавлена в очередь\n\n"
+                f"⏳ Ваша позиция: {position}\n"
+                f"🔄 Обрабатывается: {task_queue.max_workers} задач одновременно\n\n"
+                f"Ожидайте, обработка начнется автоматически..."
+            )
         else:
-            caption += "\n💳 Купить токены: /buy"
+            status_msg = await message.answer("⏳ Обрабатываю фотографию...")
         
-        await message.answer_video(video_file, caption=caption)
+        # Импортируем процессор
+        from bot.handlers.photo_processors import process_single_photo_task
         
-        # Очистка
-        image_service.cleanup(temp_path)
-        image_service.cleanup(video_path)
-        await status_msg.delete()
-        
-    except GrokAPIError as e:
-        logger.error(f"Grok API error: {e}", exc_info=True)
-        error_msg = (
-            "❌ Ошибка при генерации видео через Grok API.\n\n"
-            f"Детали: {str(e)[:200]}\n\n"
-            "Попробуйте позже или отправьте другую фотографию."
+        # Добавляем задачу в очередь
+        task = await task_queue.add_task(
+            user_id=user_id,
+            message=message,
+            task_type="single",
+            photo_data={
+                'photo': photo,
+                'file_path': file.file_path,
+                'file_bytes': file_bytes,
+                'temp_path': temp_path
+            },
+            processor=process_single_photo_task
         )
-        if 'status_msg' in locals():
-            await status_msg.edit_text(error_msg)
-        else:
-            await message.answer(error_msg)
+        
+        # Сохраняем ссылку на сообщение статуса в задаче
+        task.status_message = status_msg
+        
+        # Запускаем задачу обновления позиции в очереди
+        asyncio.create_task(update_queue_position(task, status_msg))
+        
+    except ImageValidationError as e:
+        await message.answer(f"❌ {str(e)}")
     except Exception as e:
-        logger.error(f"Error processing single photo: {e}", exc_info=True)
-        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error adding single photo to queue: {e}", exc_info=True)
         await message.answer(
-            f"❌ Произошла ошибка при обработке.\n"
-            f"Тип ошибки: {type(e).__name__}\n"
+            f"❌ Произошла ошибка при добавлении задачи в очередь.\n"
             f"Сообщение: {str(e)[:200]}"
         )
-    finally:
-        if temp_path and temp_path.exists():
-            image_service.cleanup(temp_path)
+
+
+async def update_queue_position(task: VideoGenerationTask, status_msg):
+    """Обновляет позицию задачи в очереди до начала обработки."""
+    from services.task_queue import TaskStatus
+    
+    while task.status == TaskStatus.PENDING:
+        try:
+            position = await task_queue.get_queue_position(task.task_id)
+            
+            if position > 0:
+                await status_msg.edit_text(
+                    f"📋 Задача в очереди\n\n"
+                    f"⏳ Ваша позиция: {position}\n"
+                    f"🔄 Обрабатывается: {task_queue.max_workers} задач одновременно\n\n"
+                    f"Ожидайте, обработка начнется автоматически..."
+                )
+            
+            # Проверяем каждые 3 секунды
+            await asyncio.sleep(3)
+            
+        except Exception as e:
+            logger.error(f"Error updating queue position: {e}")
+            break
+
+
+async def add_two_photos_to_queue(message: Message, first_telegram_url: str, second_telegram_url: str, second_photo_path: Path):
+    """Добавляет задачу обработки двух фотографий в очередь."""
+    user_id = message.from_user.id
+    token_service = TokenService()
+    image_service = ImageService()
+    
+    # Проверяем доступность генерации
+    if not await token_service.can_generate(user_id):
+        balance = await token_service.get_balance(user_id)
+        error_msg = (
+            f"❌ У вас недостаточно ресурсов для генерации видео.\n\n"
+            f"💰 Токенов: {balance['tokens']}\n"
+        )
+        promo_generations = balance.get('promo_generations', 0) or 0
+        if promo_generations > 0:
+            error_msg += f"🎁 Промокодных генераций: {promo_generations}\n"
+        if balance['free_remaining'] > 0:
+            error_msg += f"✅ Осталось бесплатных генераций: {balance['free_remaining']}\n\n"
+        else:
+            error_msg += f"❌ Бесплатные генерации использованы ({balance['free_used']}/{token_service.FREE_GENERATIONS_LIMIT})\n\n"
+        error_msg += (
+            f"💳 Купить токены: /buy\n"
+            f"📊 Проверить баланс: /tokens"
+        )
+        await message.answer(error_msg)
+        return
+    
+    try:
+        # Получаем позицию в очереди
+        queue_size = await task_queue.get_queue_size()
+        position = queue_size + 1
+        
+        # Отправляем сообщение о добавлении в очередь
+        if position > task_queue.max_workers:
+            status_msg = await message.answer(
+                f"📋 Задача добавлена в очередь\n\n"
+                f"⏳ Ваша позиция: {position}\n"
+                f"🔄 Обрабатывается: {task_queue.max_workers} задач одновременно\n\n"
+                f"Ожидайте, обработка начнется автоматически..."
+            )
+        else:
+            status_msg = await message.answer("⏳ Обрабатываю две фотографии...")
+        
+        # Импортируем процессор
+        from bot.handlers.photo_processors import process_two_photos_task
+        
+        # Добавляем задачу в очередь
+        task = await task_queue.add_task(
+            user_id=user_id,
+            message=message,
+            task_type="two",
+            photo_data={
+                'first_telegram_url': first_telegram_url,
+                'second_telegram_url': second_telegram_url,
+                'second_photo_path': second_photo_path
+            },
+            processor=process_two_photos_task
+        )
+        
+        # Сохраняем ссылку на сообщение статуса в задаче
+        task.status_message = status_msg
+        
+        # Запускаем задачу обновления позиции в очереди
+        asyncio.create_task(update_queue_position(task, status_msg))
+        
+    except Exception as e:
+        logger.error(f"Error adding two photos to queue: {e}", exc_info=True)
+        await message.answer(
+            f"❌ Произошла ошибка при добавлении задачи в очередь.\n"
+            f"Сообщение: {str(e)[:200]}"
+        )
 
 
 async def process_two_photos(message: Message, first_telegram_url: str, second_telegram_url: str, second_photo_path: Path):
@@ -261,12 +338,22 @@ async def process_two_photos(message: Message, first_telegram_url: str, second_t
     # Проверяем доступность генерации
     if not await token_service.can_generate(user_id):
         balance = await token_service.get_balance(user_id)
-        await message.answer(
-            f"❌ У вас недостаточно токенов для генерации видео.\n\n"
-            f"💰 Ваш баланс: {balance['tokens']} токенов\n\n"
+        error_msg = (
+            f"❌ У вас недостаточно ресурсов для генерации видео.\n\n"
+            f"💰 Токенов: {balance['tokens']}\n"
+        )
+        promo_generations = balance.get('promo_generations', 0) or 0
+        if promo_generations > 0:
+            error_msg += f"🎁 Промокодных генераций: {promo_generations}\n"
+        if balance['free_remaining'] > 0:
+            error_msg += f"✅ Осталось бесплатных генераций: {balance['free_remaining']}\n\n"
+        else:
+            error_msg += f"❌ Бесплатные генерации использованы ({balance['free_used']}/{token_service.FREE_GENERATIONS_LIMIT})\n\n"
+        error_msg += (
             f"💳 Купить токены: /buy\n"
             f"📊 Проверить баланс: /tokens"
         )
+        await message.answer(error_msg)
         return
     
     temp_paths = []
@@ -312,8 +399,10 @@ async def process_two_photos(message: Message, first_telegram_url: str, second_t
         caption = "🎬 Ваше видео готово!"
         if balance['tokens'] > 0:
             caption += f"\n💰 Осталось токенов: {balance['tokens']}"
-        elif balance['free_available']:
-            caption += "\n✅ У вас есть бесплатная генерация"
+        elif balance.get('promo_generations', 0) > 0:
+            caption += f"\n🎁 Промокодных генераций: {balance['promo_generations']}"
+        elif balance['free_remaining'] > 0:
+            caption += f"\n✅ Осталось бесплатных генераций: {balance['free_remaining']}"
         else:
             caption += "\n💳 Купить токены: /buy"
         

@@ -9,6 +9,9 @@ logger = setup_logger(__name__)
 class TokenService:
     """Сервис для управления токенами пользователей."""
     
+    # Количество бесплатных генераций для новых пользователей
+    FREE_GENERATIONS_LIMIT = 3
+    
     def __init__(self):
         # Инициализация происходит асинхронно через init_database()
         pass
@@ -26,8 +29,8 @@ class TokenService:
         async with pool.acquire() as conn:
             # Используем INSERT ... ON CONFLICT для атомарной операции
             await conn.execute("""
-                INSERT INTO user_tokens (user_id, tokens, free_generation_used)
-                VALUES ($1, 0, FALSE)
+                INSERT INTO user_tokens (user_id, tokens, free_generations_used, promo_generations)
+                VALUES ($1, 0, 0, 0)
                 ON CONFLICT (user_id) DO NOTHING
             """, user_id)
     
@@ -47,19 +50,22 @@ class TokenService:
         
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT tokens, free_generation_used
+                SELECT tokens, free_generations_used, promo_generations
                 FROM user_tokens
                 WHERE user_id = $1
             """, user_id)
             
             if row is None:
-                return True  # Новый пользователь имеет бесплатную генерацию
+                return True  # Новый пользователь имеет бесплатные генерации
             
             tokens = row['tokens']
-            free_used = row['free_generation_used']
+            free_generations_used = row['free_generations_used']
+            promo_generations = row.get('promo_generations', 0) or 0
             
-            # Может генерировать если есть бесплатная генерация или токены
-            return not free_used or tokens > 0
+            # Может генерировать если есть бесплатные генерации (меньше лимита), промокодные генерации или токены
+            free_available = free_generations_used < self.FREE_GENERATIONS_LIMIT
+            promo_available = promo_generations > 0
+            return free_available or promo_available or tokens > 0
     
     async def use_generation(self, user_id: int) -> bool:
         """
@@ -79,7 +85,7 @@ class TokenService:
             async with conn.transaction():
                 # Получаем текущее состояние
                 row = await conn.fetchrow("""
-                    SELECT tokens, free_generation_used
+                    SELECT tokens, free_generations_used
                     FROM user_tokens
                     WHERE user_id = $1
                     FOR UPDATE
@@ -89,16 +95,17 @@ class TokenService:
                     return False
                 
                 tokens = row['tokens']
-                free_used = row['free_generation_used']
+                free_generations_used = row['free_generations_used']
                 
-                # Используем бесплатную генерацию если доступна
-                if not free_used:
+                # Используем бесплатную генерацию если доступна (меньше лимита)
+                if free_generations_used < self.FREE_GENERATIONS_LIMIT:
+                    new_count = free_generations_used + 1
                     await conn.execute("""
                         UPDATE user_tokens
-                        SET free_generation_used = TRUE,
+                        SET free_generations_used = $1,
                             updated_at = NOW()
-                        WHERE user_id = $1
-                    """, user_id)
+                        WHERE user_id = $2
+                    """, new_count, user_id)
                     
                     # Записываем транзакцию
                     await conn.execute("""
@@ -106,7 +113,12 @@ class TokenService:
                         VALUES ($1, 0, 'free_generation', 'Used free generation')
                     """, user_id)
                     
-                    logger.info(f"User {user_id} used free generation")
+                    remaining_free = self.FREE_GENERATIONS_LIMIT - new_count
+                    logger.info(
+                        f"User {user_id} used free generation "
+                        f"({new_count}/{self.FREE_GENERATIONS_LIMIT}), "
+                        f"remaining free: {remaining_free}"
+                    )
                     return True
                 
                 # Используем токен если есть
@@ -137,7 +149,12 @@ class TokenService:
             user_id: ID пользователя
             
         Returns:
-            dict: {"tokens": количество токенов, "free_available": есть ли бесплатная генерация}
+            dict: {
+                "tokens": количество токенов,
+                "free_available": есть ли бесплатные генерации (bool),
+                "free_remaining": количество оставшихся бесплатных генераций (int),
+                "free_used": количество использованных бесплатных генераций (int)
+            }
         """
         await self._ensure_user_exists(user_id)
         
@@ -145,17 +162,30 @@ class TokenService:
         
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT tokens, free_generation_used
+                SELECT tokens, free_generations_used, promo_generations
                 FROM user_tokens
                 WHERE user_id = $1
             """, user_id)
             
             if row is None:
-                return {"tokens": 0, "free_available": True}
+                return {
+                    "tokens": 0,
+                    "free_available": True,
+                    "free_remaining": self.FREE_GENERATIONS_LIMIT,
+                    "free_used": 0,
+                    "promo_generations": 0
+                }
+            
+            free_generations_used = row['free_generations_used']
+            promo_generations = row.get('promo_generations', 0) or 0
+            free_remaining = max(0, self.FREE_GENERATIONS_LIMIT - free_generations_used)
             
             return {
                 "tokens": row['tokens'],
-                "free_available": not row['free_generation_used']
+                "free_available": free_remaining > 0,
+                "free_remaining": free_remaining,
+                "free_used": free_generations_used,
+                "promo_generations": promo_generations
             }
     
     async def add_tokens(self, user_id: int, amount: int):

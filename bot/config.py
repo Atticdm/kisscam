@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     max_file_size_mb: int = Field(default=10, env="MAX_FILE_SIZE_MB")
     video_duration_seconds: int = Field(default=5, env="VIDEO_DURATION_SECONDS")
     
+    # Task Queue
+    task_queue_workers: int = Field(default=5, env="TASK_QUEUE_WORKERS")
+    
+    # API Concurrency Limits
+    max_concurrent_api_calls: int = Field(default=10, env="MAX_CONCURRENT_API_CALLS")
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
