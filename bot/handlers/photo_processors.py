@@ -187,7 +187,7 @@ async def process_single_photo_task(task: VideoGenerationTask):
             "Попробуйте позже или отправьте другую фотографию."
         )
         if task.status_message:
-            await task.status_message.edit_text(error_msg)
+            await safe_edit_text(task.status_message, error_msg)
         else:
             await message.answer(error_msg)
         task.status = TaskStatus.FAILED
