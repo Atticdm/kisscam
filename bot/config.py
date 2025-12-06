@@ -63,6 +63,8 @@ except Exception as e:
         missing_vars.append("GROK_API_KEY")
     if not os.getenv("KIE_AI_API_KEY"):
         missing_vars.append("KIE_AI_API_KEY")
+    if not os.getenv("DATABASE_URL"):
+        missing_vars.append("DATABASE_URL")
     
     if missing_vars:
         raise ValueError(
