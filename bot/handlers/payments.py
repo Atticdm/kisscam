@@ -71,7 +71,7 @@ async def cmd_buy(message: Message):
 
 
 @router.callback_query(F.data.startswith("buy_tokens_"))
-async def buy_tokens_callback(callback, bot):
+async def buy_tokens_callback(callback: CallbackQuery, bot: Bot):
     """Обработчик выбора пакета токенов."""
     package_id = callback.data.split("_")[-1]
     package = TOKEN_PACKAGES.get(package_id)
