@@ -1,5 +1,5 @@
 """Сервис для rate limiting запросов пользователей."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Tuple
 from services.database import get_pool
 from bot.config import settings
@@ -29,7 +29,7 @@ class RateLimiter:
             - Количество оставшихся запросов (может быть отрицательным если лимит превышен)
         """
         pool = await get_pool()
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         window_start = now - timedelta(seconds=self.window_seconds)
         
         async with pool.acquire() as conn:
@@ -110,7 +110,7 @@ class RateLimiter:
             int: Количество оставшихся запросов
         """
         pool = await get_pool()
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         window_start = now - timedelta(seconds=self.window_seconds)
         
         async with pool.acquire() as conn:
@@ -125,6 +125,10 @@ class RateLimiter:
             
             current_count = row['request_count']
             stored_window_start = row['window_start']
+            
+            # Убеждаемся, что stored_window_start имеет timezone (если из БД пришел naive)
+            if stored_window_start.tzinfo is None:
+                stored_window_start = stored_window_start.replace(tzinfo=timezone.utc)
             
             # Если окно истекло, возвращаем полный лимит
             if stored_window_start < window_start:
@@ -153,9 +157,12 @@ class RateLimiter:
             """, user_id)
             
             if row is None:
-                return datetime.now()
+                return datetime.now(timezone.utc)
             
             window_start = row['window_start']
+            # Убеждаемся, что window_start имеет timezone
+            if window_start.tzinfo is None:
+                window_start = window_start.replace(tzinfo=timezone.utc)
             return window_start + timedelta(seconds=self.window_seconds)
     
     async def cleanup_old_records(self, days: int = 7):
@@ -167,7 +174,7 @@ class RateLimiter:
             days: Количество дней для хранения записей (по умолчанию 7)
         """
         pool = await get_pool()
-        cutoff_date = datetime.now() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         
         async with pool.acquire() as conn:
             result = await conn.execute("""
